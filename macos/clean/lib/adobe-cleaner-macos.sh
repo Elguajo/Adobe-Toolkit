@@ -97,6 +97,77 @@ adobe_cleaner_remove_paths() {
     echo "Removal pass done."
 }
 
+adobe_cleaner_refresh_launch_services() {
+    local lsregister
+    local stale_path
+    local stale_count=0
+    lsregister="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+
+    if [[ ! -x "$lsregister" ]]; then
+        echo "Launch Services refresh skipped (lsregister is unavailable)."
+        adobe_cleaner_log_line "launch services: skipped; lsregister unavailable"
+        return 0
+    fi
+
+    echo ""
+    echo -e "${RED}Removing stale application registrations...${NC}"
+
+    # -gc alone does not remove every missing bundle on current macOS releases.
+    # Explicitly unregister only missing app bundles in the Adobe paths covered
+    # by the manifest. This leaves live applications (including non-Adobe ones)
+    # and the user's Launchpad layout untouched.
+    while IFS= read -r stale_path; do
+        [[ -z "$stale_path" ]] && continue
+        stale_count=$((stale_count + 1))
+        if [[ "$DRY_RUN" == "1" ]]; then
+            echo "[dry-run] unregister stale app: $stale_path"
+            continue
+        fi
+        "$lsregister" -u "$stale_path" >/dev/null 2>&1 || true
+        adobe_cleaner_log_line "launch services: unregistered stale app: $stale_path"
+    done < <(
+        "$lsregister" -dump 2>/dev/null | awk '
+            function is_adobe_path(value) {
+                return value ~ /^\/Applications\/Adobe/ || value ~ /^\/Applications\/Utilities\/Adobe/ || value ~ /^\/Applications\/Utilities\/Creative Cloud/ || value ~ /^\/Library\/Application Support\/Adobe/
+            }
+            function emit_path() { return missing && is_adobe_path(path) }
+            /^-+$/ {
+                if (emit_path()) print path
+                missing = 0
+                path = ""
+                next
+            }
+            /Bundle node not found on disk/ { missing = 1 }
+            /^[[:space:]]*path:[[:space:]]/ {
+                path = $0
+                sub(/^[[:space:]]*path:[[:space:]]*/, "", path)
+                sub(/[[:space:]]+\(0x[[:xdigit:]]+\)$/, "", path)
+            }
+            END { if (emit_path()) print path }
+        ' | sort -u
+    )
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "[dry-run] lsregister -gc; restart Dock (stale Adobe apps found: $stale_count)"
+        adobe_cleaner_log_line "dry-run launch services garbage collection"
+        return 0
+    fi
+
+    # -gc cleans up auxiliary records after the targeted unregister pass.
+    "$lsregister" -gc >/dev/null 2>&1 || true
+    adobe_cleaner_log_line "launch services: garbage collection requested; stale apps=$stale_count"
+
+    # Dock owns Launchpad's visible cache. Restarting it makes the cleaned
+    # registrations take effect without resetting the user's Launchpad layout.
+    if pgrep -x Dock >/dev/null 2>&1; then
+        killall Dock >/dev/null 2>&1 || true
+        echo "Launchpad refreshed."
+        adobe_cleaner_log_line "launch services: Dock restarted"
+    else
+        echo "Launch Services refreshed."
+    fi
+}
+
 adobe_cleaner_flush_dns() {
     echo ""
     echo -e "${RED}Flushing DNS cache...${NC}"
@@ -235,6 +306,7 @@ adobe_cleaner_main() {
 
     adobe_cleaner_unload_launchd
     adobe_cleaner_remove_paths
+    adobe_cleaner_refresh_launch_services
     adobe_cleaner_flush_dns
 
     adobe_cleaner_log_line "=== end full ==="
