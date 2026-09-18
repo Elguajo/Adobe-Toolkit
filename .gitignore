@@ -7,3 +7,7 @@ Backups/
 *.7z
 *.rar
 .serena/
+**/.build/
+**/__pycache__/
+**/Adobe Creative Cloud Cleaner Tool.app/
+**/AdobeCreativeCloudCleanerTool.dmg

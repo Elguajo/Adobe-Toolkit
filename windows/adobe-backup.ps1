@@ -221,7 +221,7 @@ if ($mode -eq 'backup') {
   $meta = @{
     created = (Get-Date).ToString("o")
     host    = $env:COMPUTERNAME
-    note    = "Adobe Universal Settings Backuper v3 Windows backup (custom plugins, ScriptUI Panels, CEP; smart excludes)."
+    note    = "Adobe Environment Toolkit Windows backup (custom plugins, ScriptUI Panels, CEP; smart excludes)."
     itemsCopied = $copied
     apps    = $Selections.Keys
     dryRun  = [bool]$dryRun
