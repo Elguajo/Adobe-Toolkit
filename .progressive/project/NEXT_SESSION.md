@@ -6,7 +6,7 @@ Outcome: IN PROGRESS
 
 ## Current phase
 
-Phase 00 — Unified macOS GUI specification
+Phase 00 — Native macOS GUI specification
 
 ## Completed this session
 
@@ -14,12 +14,14 @@ Phase 00 — Unified macOS GUI specification
 - Reconstructed compact product state from the existing README, scripts, manifest, GUI package, and tests.
 - Selected the minimal tooling profile; no optional tools were installed.
 - Specified the unified macOS GUI navigation and module state model in Phase 00; the specification preserves independent CLI entry points and prohibits a GUI fallback to a second Terminal window.
+- Chose native apps: SwiftUI in `gui/adobe-toolkit/macos/` first, followed by WinUI in `gui/adobe-toolkit/windows/`; they share contracts/fixtures but not UI code (`ADR-002`).
+- Bound macOS GUI v1 to Backup, Restore, Cleanup Preview, and Diagnose; Full Cleanup and Repair remain CLI-only and unavailable in GUI until future explicit user authorization.
 
 ## Verification evidence
 
 - `python3 .progressive/tools/audit.py --root .` → PASS (0 errors; expected local-vs-global Skill collision warnings only).
-- `python3 .progressive/tools/context_compile.py --root .` → compiled default context: 12,469 characters, below the 22,000-character soft budget.
-- `python3 -m unittest discover -s tests -v` → 23/23 passed.
+- `python3 .progressive/tools/context_compile.py --root .` → compiled default context: 16,307 characters, below the 22,000-character soft budget.
+- `python3 -m unittest discover -s tests -v` → 27/27 passed.
 
 ## Current working state
 
@@ -27,16 +29,16 @@ RUNNABLE / GREEN
 
 ## Blockers / uncertainty
 
-- The macOS GUI cleanup privilege mechanism is intentionally undecided; a GUI process has no Terminal TTY for the current `sudo` flow.
+- Privileged GUI operations are explicitly out of scope until the user authorizes a future phase.
 
 ## Next action
 
-Specify the headless backend invocation and structured-result contract for Backup, Restore, Cleanup, Diagnose, and Repair.
+Define fixture tests proving GUI v1 failure propagation, preview immutability, cancellation, and privileged-operation refusal.
 
 ## NEXT SESSION PROMPT
 
 ```text
-Continue only: Specify the headless backend invocation and structured-result contract for Backup, Restore, Cleanup, Diagnose, and Repair.
+Continue only: Define fixture tests proving GUI v1 failure propagation, preview immutability, cancellation, and privileged-operation refusal.
 
 Finish and persist evidence for this target before selecting any later task or phase work.
 ```

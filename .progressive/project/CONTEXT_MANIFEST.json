@@ -6,9 +6,8 @@
     "notes": []
   },
   "phases": {
-    ".progressive/phases/00-unified-macos-gui-specification.md": {
+    ".progressive/phases/00-native-macos-gui-specification.md": {
       "required": [
-        "macos/AdobeBackuperGUI/Sources/AdobeBackuperGUI/BackupEngine.swift",
         "macos/AdobeBackuper.command",
         "macos/clean/lib/adobe-cleaner-macos.sh",
         "run-macos.command"
@@ -19,7 +18,9 @@
       ],
       "notes": [
         "Read targeted backend contracts only; do not load all runtime integrations or completed history.",
-        "Do not implement GUI cleanup privilege elevation until its security decision is recorded."
+        "Read gui/adobe-toolkit/macos/INTERACTION_SPEC.md and shared/contracts/macos-gui-adapter-v1.md only when changing the GUI or its adapter.",
+        "The planned macOS GUI location is gui/adobe-toolkit/macos/; do not modify current CLI terminal workflows.",
+        "Do not implement macOS GUI privileged operations without future explicit user authorization."
       ]
     }
   }
