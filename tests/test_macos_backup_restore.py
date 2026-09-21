@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import tempfile
 import unittest
@@ -53,6 +52,20 @@ class BackupRestoreTests(unittest.TestCase):
             result = self.source_function(home, f'validate_restore_manifest "{root}"')
             self.assertEqual(result.returncode, 3)
             self.assertIn("Refusing manifest restore target", result.stderr)
+
+    def test_application_customization_cannot_target_another_bundle_location(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            home.mkdir()
+            manifest(
+                root,
+                "App_Customizations/Adobe After Effects Test/Plug-ins\t"
+                "/Applications/Adobe After Effects Test/Contents\tfalse",
+            )
+            result = self.source_function(home, f'validate_restore_manifest "{root}"')
+            self.assertEqual(result.returncode, 3)
+            self.assertIn("mismatched application customization", result.stderr)
 
     def test_allowed_user_and_admin_destinations_are_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -167,8 +180,7 @@ class BackupRestoreTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("rsync failed", result.stderr)
 
-    def test_headless_privileged_restore_returns_nonzero_when_admin_command_fails(self) -> None:
-        """Protect the rsync/AppleScript failure shown by the original restore output."""
+    def test_restore_skips_non_custom_system_item(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             home = root / "home"
@@ -177,41 +189,36 @@ class BackupRestoreTests(unittest.TestCase):
             item = backup / "System_Apps_Data/Applications/Adobe Test.app"
             item.mkdir(parents=True)
             manifest(backup, "System_Apps_Data/Applications/Adobe Test.app\t/Applications\ttrue")
-            fake_bin = root / "bin"
-            fake_bin.mkdir()
-            fake_osascript = fake_bin / "osascript"
-            fake_osascript.write_text(
-                "#!/bin/sh\necho 'rsync: Operation not permitted' >&2\nexit 23\n",
-                encoding="utf-8",
-            )
-            fake_osascript.chmod(0o755)
             result = run(
                 ["bash", str(BACKUPPER), "--restore-headless", str(backup)],
-                env={**os.environ, "HOME": str(home), "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+                env={**os.environ, "HOME": str(home)},
             )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("privileged restore command failed", result.stderr)
-            self.assertNotIn("Restore Complete", result.stdout)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Skipping unsupported system restore item", result.stdout)
 
-    def test_privileged_restore_stages_backup_before_calling_admin_helper(self) -> None:
+    def test_application_customization_manifest_uses_current_user_rsync(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             home = root / "home"
             home.mkdir()
             backup = root / "backup"
-            item = backup / "System_Apps_Data/Applications/Adobe Test.app"
+            item = backup / "App_Customizations/Adobe After Effects Test/Plug-ins"
             item.mkdir(parents=True)
             (item / "plugin.txt").write_text("fixture", encoding="utf-8")
-            manifest(backup, "System_Apps_Data/Applications/Adobe Test.app\t/Applications\ttrue")
+            manifest(
+                backup,
+                "App_Customizations/Adobe After Effects Test/Plug-ins\t"
+                "/Applications/Adobe After Effects Test/\tfalse",
+            )
             fake_bin = root / "bin"
             fake_bin.mkdir()
-            command_log = root / "admin-command.txt"
-            fake_osascript = fake_bin / "osascript"
-            fake_osascript.write_text(
-                "#!/bin/sh\nprintf '%s\\n' \"$2\" > \"$ADOBE_TEST_COMMAND_LOG\"\nexit 0\n",
+            command_log = root / "rsync-command.txt"
+            fake_rsync = fake_bin / "rsync"
+            fake_rsync.write_text(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$ADOBE_TEST_COMMAND_LOG\"\nexit 0\n",
                 encoding="utf-8",
             )
-            fake_osascript.chmod(0o755)
+            fake_rsync.chmod(0o755)
 
             result = run(
                 ["bash", str(BACKUPPER), "--restore-headless", str(backup)],
@@ -225,45 +232,25 @@ class BackupRestoreTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             command = command_log.read_text(encoding="utf-8")
-            self.assertNotIn(str(backup), command)
-            match = re.search(r"'(/private/tmp/adobe-restore\.[^']+)'", command)
-            self.assertIsNotNone(match, command)
-            self.assertFalse(Path(match.group(1)).exists())
+            self.assertIn(str(item), command)
+            self.assertIn("/Applications/Adobe After Effects Test/", command)
 
-    def test_legacy_privileged_restore_stages_desktop_style_backup(self) -> None:
-        """Legacy backups have no manifest, matching the original failed restore."""
+    def test_legacy_restore_skips_unsupported_applications(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             home = root / "home"
             home.mkdir()
             backup = root / "Adobe_Backup_legacy"
-            item = backup / "System_Apps_Data/Applications/Adobe Test.app"
+            item = backup / "System_Apps_Data/Applications/Adobe InDesign Test/Plug-ins"
             item.mkdir(parents=True)
             (item / "plugin.txt").write_text("fixture", encoding="utf-8")
-            fake_bin = root / "bin"
-            fake_bin.mkdir()
-            command_log = root / "admin-command.txt"
-            fake_osascript = fake_bin / "osascript"
-            fake_osascript.write_text(
-                "#!/bin/sh\nprintf '%s\\n' \"$2\" > \"$ADOBE_TEST_COMMAND_LOG\"\nexit 0\n",
-                encoding="utf-8",
-            )
-            fake_osascript.chmod(0o755)
 
             result = run(
                 ["bash", str(BACKUPPER), "--restore-headless", str(backup)],
-                env={
-                    **os.environ,
-                    "HOME": str(home),
-                    "PATH": f"{fake_bin}:{os.environ['PATH']}",
-                    "ADOBE_TEST_COMMAND_LOG": str(command_log),
-                },
+                env={**os.environ, "HOME": str(home)},
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            command = command_log.read_text(encoding="utf-8")
-            self.assertNotIn(str(backup), command)
-            self.assertIn("/private/tmp/adobe-restore.", command)
 
     def test_selection_file_filters_backup_sources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

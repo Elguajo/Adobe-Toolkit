@@ -46,22 +46,6 @@ PLUGIN_EXCLUDES=(
 # GUI HELPER FUNCTIONS
 # ==========================================
 
-function shell_quote() {
-    local s="$1"
-    s=${s//\'/\'\\\'\'}
-    printf "'%s'" "$s"
-}
-
-function run_admin_cmd() {
-    local cmd="$1"
-    osascript <<'APPLESCRIPT' - "$cmd"
-on run argv
-  set cmd to item 1 of argv
-  do shell script cmd with administrator privileges
-end run
-APPLESCRIPT
-}
-
 # Runs rsync and records failures instead of letting them pass silently.
 # Sets BACKUP_HAD_ERRORS/RESTORE_HAD_ERRORS (whichever the caller uses) to 1 on failure.
 function run_rsync() {
@@ -75,122 +59,9 @@ function run_rsync() {
     return 0
 }
 
-# Joins queued admin-privileged commands with && (so a failed step stops the rest instead
-# of silently continuing) and runs them behind a single admin prompt. Sets RESTORE_HAD_ERRORS
-# on failure. Takes the commands as positional args (macOS ships bash 3.2, no namerefs).
-function run_admin_cmds() {
-    if [ "$#" -eq 0 ]; then
-        return 0
-    fi
-
-    local joined="" c
-    for c in "$@"; do
-        if [ -n "$joined" ]; then
-            joined="$joined && $c"
-        else
-            joined="$c"
-        fi
-    done
-
-    if ! run_admin_cmd "$joined"; then
-        echo "ERROR: privileged restore command failed" >&2
-        RESTORE_HAD_ERRORS=1
-        return 1
-    fi
-    return 0
-}
-
-# macOS privacy controls can let the signed-in user read a backup on Desktop while
-# denying the administrator helper that same read. Stage only the system portions
-# in a private temporary directory before invoking the helper, so its rsync source
-# is outside protected user folders. The destination allowlist is still enforced
-# before anything is queued for privileged restore.
-function stage_admin_restore_sources() {
-    local source_root="$1"
-    local staging_root="$2"
-    local component source_path
-
-    for component in System_Apps_Data System_Library_Adobe; do
-        source_path="$source_root/$component"
-        if [ -e "$source_path" ]; then
-            run_rsync -a "$source_path" "$staging_root/" || return 1
-        fi
-    done
-    return 0
-}
-
-function remove_admin_restore_stage() {
-    local staging_root="$1"
-
-    # This path is created by mktemp below, never taken from the backup manifest.
-    if [[ "$staging_root" == /private/tmp/adobe-restore.* && -d "$staging_root" ]]; then
-        rm -rf "$staging_root"
-    fi
-}
-
-# ADMIN_RESTORE_SOURCES and ADMIN_RESTORE_DESTINATIONS are local arrays owned by
-# do_restore_from_source. Bash dynamically scopes them into this helper.
-function run_staged_admin_restores() {
-    local source_root="$1"
-    local previous_umask staging_root source_path destination relative_path staged_path
-    local index rc
-    local -a staged_commands=()
-
-    if [ "${#ADMIN_RESTORE_SOURCES[@]}" -ne "${#ADMIN_RESTORE_DESTINATIONS[@]}" ]; then
-        echo "ERROR: Privileged restore queue is inconsistent." >&2
-        RESTORE_HAD_ERRORS=1
-        return 1
-    fi
-
-    previous_umask=$(umask)
-    umask 077
-    staging_root=$(mktemp -d /private/tmp/adobe-restore.XXXXXX)
-    rc=$?
-    umask "$previous_umask"
-    if [ "$rc" -ne 0 ] || [ -z "$staging_root" ]; then
-        echo "ERROR: Could not create a private staging directory for privileged restore." >&2
-        RESTORE_HAD_ERRORS=1
-        return 1
-    fi
-
-    echo "Staging system restore data..."
-    if ! stage_admin_restore_sources "$source_root" "$staging_root"; then
-        echo "ERROR: Could not stage system restore data." >&2
-        remove_admin_restore_stage "$staging_root"
-        RESTORE_HAD_ERRORS=1
-        return 1
-    fi
-
-    for ((index = 0; index < ${#ADMIN_RESTORE_SOURCES[@]}; index++)); do
-        source_path="${ADMIN_RESTORE_SOURCES[$index]}"
-        destination="${ADMIN_RESTORE_DESTINATIONS[$index]}"
-        if [[ "$source_path" != "$source_root"/* ]]; then
-            echo "ERROR: Refusing privileged restore source outside backup root: $source_path" >&2
-            remove_admin_restore_stage "$staging_root"
-            RESTORE_HAD_ERRORS=1
-            return 1
-        fi
-
-        relative_path="${source_path#"$source_root"}"
-        staged_path="$staging_root$relative_path"
-        if [ ! -e "${staged_path%/}" ]; then
-            echo "ERROR: Staged privileged restore source is missing: $relative_path" >&2
-            remove_admin_restore_stage "$staging_root"
-            RESTORE_HAD_ERRORS=1
-            return 1
-        fi
-        staged_commands+=("rsync -a -v $(shell_quote "$staged_path") $(shell_quote "$destination")")
-    done
-
-    run_admin_cmds "${staged_commands[@]}"
-    rc=$?
-    remove_admin_restore_stage "$staging_root"
-    return "$rc"
-}
-
 function show_menu() {
     osascript <<EOD
-    set question to display dialog "Adobe Environment Toolkit\n\nBackup/Restore:\n- Preferences\n- Custom Plugins Only\n- ScriptUI Panels Only (No default scripts)\n\n(Cleanest possible backup)" buttons {"Cancel", "Restore", "Backup"} default button "Backup" with icon note
+    set question to display dialog "Adobe Environment Toolkit\n\nBackup/Restore:\n- User preferences and Adobe documents\n- Custom plug-ins and scripts for After Effects, Illustrator, and Photoshop\n\n(Shared Adobe system data is excluded)" buttons {"Cancel", "Restore", "Backup"} default button "Backup" with icon note
     return button returned of question
 EOD
 }
@@ -288,9 +159,7 @@ function enumerate_backup_items() {
     local APP_SUPPORT="$HOME/Library/Application Support/Adobe"
     local PREFS="$HOME/Library/Preferences"
     local DEST_USER="$CURRENT_BACKUP_FOLDER/User_Library"
-    local DEST_SYSTEM="$CURRENT_BACKUP_FOLDER/System_Apps_Data"
-    local SYS_LIB_ADOBE="/Library/Application Support/Adobe"
-    local DEST_SYS_LIB="$CURRENT_BACKUP_FOLDER/System_Library_Adobe"
+    local DEST_APP_CUSTOMIZATIONS="$CURRENT_BACKUP_FOLDER/App_Customizations"
     local INSTALLED_ADOBE_PREF_KEYS
     IFS=$'\n' read -r -d '' -a INSTALLED_ADOBE_PREF_KEYS < <(installed_adobe_preference_keys && printf '\0')
 
@@ -329,22 +198,23 @@ function enumerate_backup_items() {
     done < <(find "$DOCS_ADOBE/Premiere Pro" -mindepth 2 -maxdepth 2 -type d -name "Profile-*" -print0 2>/dev/null)
 
     while IFS= read -r -d '' app_path; do
+        local app_name
+        app_name=$(basename "$app_path")
         if [ -d "$app_path/Plug-ins" ] && should_include_backup_source "$app_path/Plug-ins"; then
-            "$callback" "App Plug-ins" "$app_path/Plug-ins" "$DEST_SYSTEM$app_path/Plug-ins" "$app_path/" true plugins
+            "$callback" "$app_name Plug-ins" "$app_path/Plug-ins" "$DEST_APP_CUSTOMIZATIONS/$app_name/Plug-ins" "$app_path/" false plugins
         fi
 
         if [ -d "$app_path/Scripts/ScriptUI Panels" ] && should_include_backup_source "$app_path/Scripts/ScriptUI Panels"; then
-            "$callback" "ScriptUI Panels" "$app_path/Scripts/ScriptUI Panels" "$DEST_SYSTEM$app_path/Scripts/ScriptUI Panels" "$app_path/Scripts/" true standard
+            "$callback" "$app_name ScriptUI Panels" "$app_path/Scripts/ScriptUI Panels" "$DEST_APP_CUSTOMIZATIONS/$app_name/Scripts/ScriptUI Panels" "$app_path/Scripts/" false standard
         fi
-    done < <(find /Applications -maxdepth 2 -type d -name "Adobe *" -print0 2>/dev/null)
 
-    if [ -e "$SYS_LIB_ADOBE/Common/Plug-ins" ] && should_include_backup_source "$SYS_LIB_ADOBE/Common/Plug-ins"; then
-        "$callback" "System Common Plug-ins" "$SYS_LIB_ADOBE/Common/Plug-ins" "$DEST_SYS_LIB/Common/Plug-ins" "/Library/Application Support/Adobe/Common/" true standard
-    fi
-
-    if [ -e "$SYS_LIB_ADOBE/CEP" ] && should_include_backup_source "$SYS_LIB_ADOBE/CEP"; then
-        "$callback" "System CEP" "$SYS_LIB_ADOBE/CEP" "$DEST_SYS_LIB/CEP" "/Library/Application Support/Adobe/" true standard
-    fi
+        while IFS= read -r -d '' scripts_path; do
+            local scripts_relative="${scripts_path#"$app_path"/}"
+            if should_include_backup_source "$scripts_path"; then
+                "$callback" "$app_name Preset Scripts" "$scripts_path" "$DEST_APP_CUSTOMIZATIONS/$app_name/$scripts_relative" "$(dirname "$scripts_path")/" false standard
+            fi
+        done < <(find "$app_path/Presets" -type d -name Scripts -print0 2>/dev/null)
+    done < <(find /Applications -maxdepth 1 -type d \( -name "Adobe After Effects *" -o -name "Adobe Illustrator *" -o -name "Adobe Photoshop *" \) -print0 2>/dev/null)
 }
 
 function item_excludes() {
@@ -567,9 +437,9 @@ function is_within_dir() {
     return 1
 }
 
-# Manifest entries drive privileged rsync destinations, so a manifest.tsv from an
-# untrusted/shared backup folder must not be able to point admin=true writes anywhere
-# it wants. Only allow the destinations this script itself ever writes into the manifest.
+# A backup folder is untrusted input. Only user directories and the installed
+# After Effects, Illustrator, or Photoshop application bundle may be restore
+# targets; application restores are limited to custom plug-ins and scripts below.
 function is_allowed_restore_target() {
     local restore_parent="$1"
     local admin="$2"
@@ -589,14 +459,47 @@ function is_allowed_restore_target() {
     user_documents=$(canonicalize_restore_target "$HOME/Documents/Adobe") || return 1
     is_within_dir "$canonical_parent" "$user_library" && return 0
     is_within_dir "$canonical_parent" "$user_documents" && return 0
+    case "$canonical_parent" in
+        /Applications/Adobe\ After\ Effects\ *|/Applications/Adobe\ Illustrator\ *|/Applications/Adobe\ Photoshop\ *) return 0 ;;
+    esac
     return 1
 }
 
 function is_allowed_manifest_backup_path() {
     case "$1" in
-        User_Library/*|User_Documents/*|System_Apps_Data/Applications/*|System_Library_Adobe/*) return 0 ;;
+        User_Library/*|User_Documents/*|\
+        App_Customizations/Adobe\ After\ Effects\ */Plug-ins|App_Customizations/Adobe\ Illustrator\ */Plug-ins|App_Customizations/Adobe\ Photoshop\ */Plug-ins|\
+        App_Customizations/Adobe\ After\ Effects\ */Scripts/ScriptUI\ Panels|App_Customizations/Adobe\ Illustrator\ */Scripts/ScriptUI\ Panels|App_Customizations/Adobe\ Photoshop\ */Scripts/ScriptUI\ Panels|\
+        App_Customizations/Adobe\ After\ Effects\ */Presets/*/Scripts|App_Customizations/Adobe\ Illustrator\ */Presets/*/Scripts|App_Customizations/Adobe\ Photoshop\ */Presets/*/Scripts|\
+        System_Apps_Data/Applications/*|System_Library_Adobe/*) return 0 ;;
     esac
     return 1
+}
+
+function is_allowed_customization_restore_pair() {
+    local backup_path="$1"
+    local canonical_parent="$2"
+    local relative_path app_name item_path expected_parent
+
+    case "$backup_path" in
+        App_Customizations/*) ;;
+        *) return 0 ;;
+    esac
+
+    relative_path="${backup_path#App_Customizations/}"
+    app_name="${relative_path%%/*}"
+    item_path="${relative_path#*/}"
+    expected_parent="/Applications/$app_name"
+
+    case "$item_path" in
+        Plug-ins) ;;
+        Scripts/ScriptUI\ Panels) expected_parent="$expected_parent/Scripts" ;;
+        Presets/*/Scripts) expected_parent="$expected_parent/${item_path%/Scripts}" ;;
+        *) return 1 ;;
+    esac
+
+    expected_parent=$(canonicalize_restore_target "$expected_parent") || return 1
+    [ "$canonical_parent" = "$expected_parent" ]
 }
 
 function validate_backup_metadata() {
@@ -652,6 +555,10 @@ function validate_restore_manifest() {
             echo "ERROR: Refusing manifest restore target: $restore_parent (admin=$admin)" >&2
             return 3
         fi
+        if ! is_allowed_customization_restore_pair "$backup_path" "$(canonicalize_restore_target "$restore_parent")"; then
+            echo "ERROR: Refusing mismatched application customization restore target: $restore_parent" >&2
+            return 3
+        fi
     done < <(tail -n +2 "$manifest")
     return 0
 }
@@ -668,12 +575,19 @@ function restore_manifest_item() {
         return
     fi
 
-    if [ "$admin" = "true" ]; then
-        ADMIN_RESTORE_SOURCES+=("$source_path")
-        ADMIN_RESTORE_DESTINATIONS+=("$restore_parent")
-    else
-        run_rsync -a -v "$source_path" "$restore_parent" || RESTORE_HAD_ERRORS=1
-    fi
+    case "$backup_path" in
+        App_Customizations/Adobe\ After\ Effects\ */*|App_Customizations/Adobe\ Illustrator\ */*|App_Customizations/Adobe\ Photoshop\ */*|\
+        System_Apps_Data/Applications/Adobe\ After\ Effects\ */Plug-ins|System_Apps_Data/Applications/Adobe\ After\ Effects\ */Scripts/ScriptUI\ Panels|\
+        System_Apps_Data/Applications/Adobe\ Illustrator\ */Plug-ins|System_Apps_Data/Applications/Adobe\ Photoshop\ */Plug-ins)
+            run_rsync -a -v "$source_path" "$restore_parent" || RESTORE_HAD_ERRORS=1
+            ;;
+        User_Library/*|User_Documents/*)
+            run_rsync -a -v "$source_path" "$restore_parent" || RESTORE_HAD_ERRORS=1
+            ;;
+        *)
+            echo "Skipping unsupported system restore item: $backup_path"
+            ;;
+    esac
 }
 
 function restore_from_manifest() {
@@ -730,7 +644,7 @@ function do_backup() {
 
     if [ "${ADOBE_BACKUP_HEADLESS:-false}" != "true" ]; then
         if [ "$BACKUP_HAD_ERRORS" -eq 0 ]; then
-            show_success "Backup Complete!\nOnly custom plugins and ScriptUI Panels saved."
+            show_success "Backup Complete!\nUser data and selected application customizations saved."
             show_notification "Backup Successful"
         else
             show_alert "Backup finished with errors.\nSome items failed to copy - check the Terminal output.\nDestination:\n$CURRENT_BACKUP_FOLDER"
@@ -746,6 +660,38 @@ function do_backup() {
 # RESTORE LOGIC
 # ==========================================
 
+function restore_legacy_application_items() {
+    local source_root="$1"
+    local source_apps="$source_root/System_Apps_Data/Applications"
+    local source_app destination_app scripts_path scripts_relative
+
+    [ -d "$source_apps" ] || return 0
+
+    for source_app in "$source_apps"/Adobe\ After\ Effects\ * "$source_apps"/Adobe\ Illustrator\ * "$source_apps"/Adobe\ Photoshop\ *; do
+        [ -d "$source_app" ] || continue
+        destination_app="/Applications/$(basename "$source_app")"
+        if [ ! -d "$destination_app" ]; then
+            echo "Skipping custom application items; application is not installed: $destination_app" >&2
+            RESTORE_HAD_ERRORS=1
+            continue
+        fi
+
+        if [ -d "$source_app/Plug-ins" ]; then
+            echo "Restoring $(basename "$source_app") Plug-ins..."
+            run_rsync -a -v "$source_app/Plug-ins" "$destination_app/" || RESTORE_HAD_ERRORS=1
+        fi
+        if [ -d "$source_app/Scripts/ScriptUI Panels" ]; then
+            echo "Restoring $(basename "$source_app") ScriptUI Panels..."
+            run_rsync -a -v "$source_app/Scripts/ScriptUI Panels" "$destination_app/Scripts/" || RESTORE_HAD_ERRORS=1
+        fi
+        while IFS= read -r -d '' scripts_path; do
+            scripts_relative="${scripts_path#"$source_app"/}"
+            echo "Restoring $(basename "$source_app") Preset Scripts..."
+            run_rsync -a -v "$scripts_path" "$destination_app/$(dirname "$scripts_relative")/" || RESTORE_HAD_ERRORS=1
+        done < <(find "$source_app/Presets" -type d -name Scripts -print0 2>/dev/null)
+    done
+}
+
 function do_restore_from_source() {
     local SOURCE="$1"
     if [[ "$SOURCE" == "UserCanceled" ]]; then exit 0; fi
@@ -758,17 +704,9 @@ function do_restore_from_source() {
     echo "--- Starting Restore ---"
 
     RESTORE_HAD_ERRORS=0
-    local -a ADMIN_RESTORE_SOURCES=()
-    local -a ADMIN_RESTORE_DESTINATIONS=()
-
     restore_from_manifest "$SOURCE"
     local manifest_status=$?
     if [ "$manifest_status" -eq 0 ]; then
-        if [ "${#ADMIN_RESTORE_SOURCES[@]}" -gt 0 ]; then
-            echo "Restoring privileged manifest items..."
-            run_staged_admin_restores "$SOURCE"
-        fi
-
         if [ "${ADOBE_BACKUP_HEADLESS:-false}" != "true" ]; then
             if [ "$RESTORE_HAD_ERRORS" -eq 0 ]; then
                 show_success "Restore Complete!\nManifest-based restore completed."
@@ -794,50 +732,17 @@ function do_restore_from_source() {
         run_rsync -a -v "${RSYNC_EXCLUDES[@]}" "$SOURCE/User_Library/Preferences/" "$HOME/Library/Preferences/" || RESTORE_HAD_ERRORS=1
     fi
 
-    # --- 2. Restore System Data (With Admin Privileges) ---
-    local NEEDS_SUDO=false
-
     if [ -d "$SOURCE/System_Apps_Data" ]; then
-        NEEDS_SUDO=true
-        # Safety checks: only allow restoring into /Applications via the saved structure.
-        if [ ! -d "$SOURCE/System_Apps_Data/Applications" ]; then
-            echo "ERROR: Invalid backup structure: expected System_Apps_Data/Applications" >&2
-            [ "${ADOBE_BACKUP_HEADLESS:-false}" = "true" ] || show_alert "Invalid backup structure.\nExpected: System_Apps_Data/Applications\n\nAborting restore."
-            RESTORE_HAD_ERRORS=1
-            return 3
-        fi
-        if find "$SOURCE/System_Apps_Data" -mindepth 1 -maxdepth 1 -type d ! -name "Applications" -print -quit | grep -q .; then
-            echo "ERROR: Invalid backup structure: System_Apps_Data contains unexpected top-level folders" >&2
-            [ "${ADOBE_BACKUP_HEADLESS:-false}" = "true" ] || show_alert "Invalid backup structure.\nSystem_Apps_Data contains unexpected top-level folders.\n\nAborting restore."
-            RESTORE_HAD_ERRORS=1
-            return 3
-        fi
-        # Intentionally no exclude patterns here: safer quoting and predictable restore target.
-        ADMIN_RESTORE_SOURCES+=("$SOURCE/System_Apps_Data/Applications/")
-        ADMIN_RESTORE_DESTINATIONS+=("/Applications/")
+        restore_legacy_application_items "$SOURCE"
     fi
 
     if [ -d "$SOURCE/System_Library_Adobe" ]; then
-        NEEDS_SUDO=true
-        if [ ! -d "$SOURCE/System_Library_Adobe" ]; then
-            echo "ERROR: Invalid backup structure: expected System_Library_Adobe" >&2
-            [ "${ADOBE_BACKUP_HEADLESS:-false}" = "true" ] || show_alert "Invalid backup structure.\nExpected: System_Library_Adobe\n\nAborting restore."
-            RESTORE_HAD_ERRORS=1
-            return 3
-        fi
-        # Intentionally no exclude patterns here: safer quoting and predictable restore target.
-        ADMIN_RESTORE_SOURCES+=("$SOURCE/System_Library_Adobe/")
-        ADMIN_RESTORE_DESTINATIONS+=("/Library/Application Support/Adobe/")
-    fi
-
-    if [ "$NEEDS_SUDO" = true ]; then
-        echo "Restoring System Scripts/Plugins..."
-        run_staged_admin_restores "$SOURCE"
+        echo "Skipping shared /Library Adobe data."
     fi
 
     if [ "${ADOBE_BACKUP_HEADLESS:-false}" != "true" ]; then
         if [ "$RESTORE_HAD_ERRORS" -eq 0 ]; then
-            show_success "Restore Complete!\nCustom plugins and ScriptUI Panels restored."
+            show_success "Restore Complete!\nUser data and selected application customizations restored."
             show_notification "Restore Successful"
         else
             show_alert "Restore finished with errors.\nSome items failed - check the Terminal output."
