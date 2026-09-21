@@ -155,6 +155,9 @@ The backup module is designed to preserve the parts of an Adobe environment that
 
 Where possible, caches, logs, recovery data, and Adobe-delivered modules (including local Sensei AI model caches) are excluded. User preferences, presets, and third-party extensions remain included.
 
+> [!NOTE]
+> Adobe licenses and activation state are not backed up or restored. After migrating or reinstalling, sign in to Creative Cloud on the destination computer. Caches, logs, temporary files, and recovery data are excluded, so Restore does not bring obsolete service state into a new installation. Settings, presets, workspaces, and third-party extensions are restored over matching existing files; third-party plugins may require reactivation.
+
 Direct backup/restore entry points remain available:
 
 - macOS: `macos/AdobeBackuper.command`
