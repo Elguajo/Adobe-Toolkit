@@ -45,15 +45,15 @@ The canonical [adapter contract](../../shared/contracts/macos-gui-adapter-v1.md)
 - [x] Specify the unified navigation and per-module states from the approved visual concept.
 - [x] Choose the native macOS-first boundary: SwiftUI in `gui/adobe-toolkit/macos/`, then WinUI in `gui/adobe-toolkit/windows/`, with shared contracts/fixtures and preserved CLI workflows (`ADR-002`).
 - [x] Specify the versioned macOS-adapter invocation/result contract for Backup, Restore, Cleanup Preview, and Diagnose; defer Full Cleanup/Repair until future explicit user authorization.
-- [ ] Define fixture tests for failure propagation, cancellation, preview immutability, and privileged-operation refusal.
+- [x] Define fixture tests for failure propagation, cancellation, preview immutability, and privileged-operation refusal.
 
 ## Acceptance criteria
 
-- [ ] The specification identifies one supported macOS GUI entry point and retains all current macOS CLI entry points/workflows.
-- [ ] GUI v1 has no privileged or destructive-cleanup action; Full Cleanup/Repair display an unavailable explanation.
-- [ ] Backend failures have a defined GUI state and cannot produce a success notification.
-- [ ] macOS GUI v1 supports Backup, Restore, Cleanup Preview, and Diagnose only through the adapter contract; Full Cleanup and Repair remain unavailable.
-- [ ] Implementation scope is bounded enough to start work without reopening product or security decisions.
+- [x] The specification identifies one supported macOS GUI entry point and retains all current macOS CLI entry points/workflows.
+- [x] GUI v1 has no privileged or destructive-cleanup action; Full Cleanup/Repair display an unavailable explanation.
+- [x] Backend failures have a defined GUI state and cannot produce a success notification.
+- [x] macOS GUI v1 supports Backup, Restore, Cleanup Preview, and Diagnose only through the adapter contract; Full Cleanup and Repair remain unavailable.
+- [x] Implementation scope is bounded enough to start work without reopening product or security decisions.
 
 ## Negative / security cases
 
@@ -70,4 +70,33 @@ The canonical [adapter contract](../../shared/contracts/macos-gui-adapter-v1.md)
 
 ## Completion Record
 
-Populate only when this phase becomes `[x]`.
+Status: COMPLETED
+
+### Outcome
+
+Specified the macOS 12+ GUI v1 boundary and verified its safety semantics with fake-backend fixtures; no SwiftUI application or privileged GUI operation was implemented.
+
+### Delivered
+
+- Canonical interaction and adapter-contract specifications for Backup, Safe-copy Restore, Cleanup Preview, and Diagnose.
+- Fixture tests for preview immutability, typed refusal of Full Cleanup/Repair, backend failure, cancellation, and malformed or inconsistent JSON results.
+
+### Decisions made
+
+- GUI v1 exposes no privileged operation: `cleanup.apply`, `repair.preview`, and `repair.apply` return `unsupported` without backend invocation or authorization.
+- Fixtures use only temporary directories and an in-memory fake backend; they do not invoke real cleanup, Launch Services, Launchpad, `sudo`, or Adobe-data operations.
+
+### Verification evidence
+
+- `python3 .progressive/tools/audit.py --root .` → PASS (0 errors; expected Skill-collision warnings only).
+- `python3 .progressive/tools/context_compile.py --root .` → PASS.
+- `python3 -m unittest discover -s tests -v` → 32/32 passed.
+- `git diff --check` → PASS.
+
+### Architectural impact
+
+Later native GUI work may rely on the v1 adapter allowlist, result-envelope rules, and shared fixture semantics. Privileged Full Cleanup and Repair remain outside scope pending explicit user authorization.
+
+### Follow-up
+
+- Select and scope Phase 01 — Native Windows GUI parity; do not begin privileged GUI operations.
