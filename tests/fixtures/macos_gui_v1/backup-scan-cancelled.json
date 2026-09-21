@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "operation": "backup.scan",
+  "status": "cancelled",
+  "exitCode": 2,
+  "mutates": false,
+  "summary": {},
+  "items": [],
+  "warnings": [],
+  "errors": [],
+  "logPath": null
+}

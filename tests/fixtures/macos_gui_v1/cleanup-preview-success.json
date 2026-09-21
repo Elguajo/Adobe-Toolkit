@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "operation": "cleanup.preview",
+  "status": "success",
+  "exitCode": 0,
+  "mutates": false,
+  "summary": {"targetCount": 1, "totalBytes": 7},
+  "items": [{"id": "adobe-prefs", "category": "preferences", "state": "would-remove", "displayPath": "~/Library/Preferences/com.adobe.fixture.plist", "message": "Preview only"}],
+  "warnings": ["Fixture warning"],
+  "errors": [],
+  "logPath": null
+}
