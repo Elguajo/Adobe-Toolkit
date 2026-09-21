@@ -153,7 +153,7 @@ The backup module is designed to preserve the parts of an Adobe environment that
 | ScriptUI Panels | ✓ | ✓ |
 | CEP extensions | ✓ | ✓ |
 
-Where possible, caches, logs, and standard Adobe components are excluded.
+Where possible, caches, logs, recovery data, and Adobe-delivered modules (including local Sensei AI model caches) are excluded. User preferences, presets, and third-party extensions remain included.
 
 Direct backup/restore entry points remain available:
 

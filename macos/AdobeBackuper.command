@@ -10,10 +10,13 @@ BACKUP_ROOT="$HOME/Desktop/Backups"
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 CURRENT_BACKUP_FOLDER="$BACKUP_ROOT/Adobe_Backup_$TIMESTAMP"
 
-# Standard Exclusions (Cache, Logs, System Junk)
+# Standard exclusions: regenerated caches, recovery data, and Adobe-delivered modules.
+# Keep user preferences, presets, and third-party extensions; the excluded items are
+# recreated by Adobe or downloaded again after the application is installed.
 RSYNC_EXCLUDES=(
     --exclude="*Cache*" 
     --exclude="*Caches*" 
+    --exclude="*cache*"
     --exclude="*.tmp" 
     --exclude="*.lock" 
     --exclude="*.log" 
@@ -25,6 +28,8 @@ RSYNC_EXCLUDES=(
     --exclude="Team Projects Local Hub" 
     --exclude="CC_LIBRARIES_PANEL_EXTENSION*" 
     --exclude="ACPLocal*"
+    --exclude="AddonModules"
+    --exclude="AutoRecover"
 )
 
 # Plugins Exclusions (Standard Adobe Plugins)
@@ -93,6 +98,94 @@ function run_admin_cmds() {
         return 1
     fi
     return 0
+}
+
+# macOS privacy controls can let the signed-in user read a backup on Desktop while
+# denying the administrator helper that same read. Stage only the system portions
+# in a private temporary directory before invoking the helper, so its rsync source
+# is outside protected user folders. The destination allowlist is still enforced
+# before anything is queued for privileged restore.
+function stage_admin_restore_sources() {
+    local source_root="$1"
+    local staging_root="$2"
+    local component source_path
+
+    for component in System_Apps_Data System_Library_Adobe; do
+        source_path="$source_root/$component"
+        if [ -e "$source_path" ]; then
+            run_rsync -a "$source_path" "$staging_root/" || return 1
+        fi
+    done
+    return 0
+}
+
+function remove_admin_restore_stage() {
+    local staging_root="$1"
+
+    # This path is created by mktemp below, never taken from the backup manifest.
+    if [[ "$staging_root" == /private/tmp/adobe-restore.* && -d "$staging_root" ]]; then
+        rm -rf "$staging_root"
+    fi
+}
+
+# ADMIN_RESTORE_SOURCES and ADMIN_RESTORE_DESTINATIONS are local arrays owned by
+# do_restore_from_source. Bash dynamically scopes them into this helper.
+function run_staged_admin_restores() {
+    local source_root="$1"
+    local previous_umask staging_root source_path destination relative_path staged_path
+    local index rc
+    local -a staged_commands=()
+
+    if [ "${#ADMIN_RESTORE_SOURCES[@]}" -ne "${#ADMIN_RESTORE_DESTINATIONS[@]}" ]; then
+        echo "ERROR: Privileged restore queue is inconsistent." >&2
+        RESTORE_HAD_ERRORS=1
+        return 1
+    fi
+
+    previous_umask=$(umask)
+    umask 077
+    staging_root=$(mktemp -d /private/tmp/adobe-restore.XXXXXX)
+    rc=$?
+    umask "$previous_umask"
+    if [ "$rc" -ne 0 ] || [ -z "$staging_root" ]; then
+        echo "ERROR: Could not create a private staging directory for privileged restore." >&2
+        RESTORE_HAD_ERRORS=1
+        return 1
+    fi
+
+    echo "Staging system restore data..."
+    if ! stage_admin_restore_sources "$source_root" "$staging_root"; then
+        echo "ERROR: Could not stage system restore data." >&2
+        remove_admin_restore_stage "$staging_root"
+        RESTORE_HAD_ERRORS=1
+        return 1
+    fi
+
+    for ((index = 0; index < ${#ADMIN_RESTORE_SOURCES[@]}; index++)); do
+        source_path="${ADMIN_RESTORE_SOURCES[$index]}"
+        destination="${ADMIN_RESTORE_DESTINATIONS[$index]}"
+        if [[ "$source_path" != "$source_root"/* ]]; then
+            echo "ERROR: Refusing privileged restore source outside backup root: $source_path" >&2
+            remove_admin_restore_stage "$staging_root"
+            RESTORE_HAD_ERRORS=1
+            return 1
+        fi
+
+        relative_path="${source_path#"$source_root"}"
+        staged_path="$staging_root$relative_path"
+        if [ ! -e "${staged_path%/}" ]; then
+            echo "ERROR: Staged privileged restore source is missing: $relative_path" >&2
+            remove_admin_restore_stage "$staging_root"
+            RESTORE_HAD_ERRORS=1
+            return 1
+        fi
+        staged_commands+=("rsync -a -v $(shell_quote "$staged_path") $(shell_quote "$destination")")
+    done
+
+    run_admin_cmds "${staged_commands[@]}"
+    rc=$?
+    remove_admin_restore_stage "$staging_root"
+    return "$rc"
 }
 
 function show_menu() {
@@ -576,7 +669,8 @@ function restore_manifest_item() {
     fi
 
     if [ "$admin" = "true" ]; then
-        ADMIN_CMDS+=("rsync -a -v $(shell_quote "$source_path") $(shell_quote "$restore_parent")")
+        ADMIN_RESTORE_SOURCES+=("$source_path")
+        ADMIN_RESTORE_DESTINATIONS+=("$restore_parent")
     else
         run_rsync -a -v "$source_path" "$restore_parent" || RESTORE_HAD_ERRORS=1
     fi
@@ -664,14 +758,15 @@ function do_restore_from_source() {
     echo "--- Starting Restore ---"
 
     RESTORE_HAD_ERRORS=0
-    local -a ADMIN_CMDS=()
+    local -a ADMIN_RESTORE_SOURCES=()
+    local -a ADMIN_RESTORE_DESTINATIONS=()
 
     restore_from_manifest "$SOURCE"
     local manifest_status=$?
     if [ "$manifest_status" -eq 0 ]; then
-        if [ "${#ADMIN_CMDS[@]}" -gt 0 ]; then
+        if [ "${#ADMIN_RESTORE_SOURCES[@]}" -gt 0 ]; then
             echo "Restoring privileged manifest items..."
-            run_admin_cmds "${ADMIN_CMDS[@]}"
+            run_staged_admin_restores "$SOURCE"
         fi
 
         if [ "${ADOBE_BACKUP_HEADLESS:-false}" != "true" ]; then
@@ -718,7 +813,8 @@ function do_restore_from_source() {
             return 3
         fi
         # Intentionally no exclude patterns here: safer quoting and predictable restore target.
-        ADMIN_CMDS+=("rsync -a -v $(shell_quote "$SOURCE/System_Apps_Data/Applications/") $(shell_quote "/Applications/")")
+        ADMIN_RESTORE_SOURCES+=("$SOURCE/System_Apps_Data/Applications/")
+        ADMIN_RESTORE_DESTINATIONS+=("/Applications/")
     fi
 
     if [ -d "$SOURCE/System_Library_Adobe" ]; then
@@ -730,12 +826,13 @@ function do_restore_from_source() {
             return 3
         fi
         # Intentionally no exclude patterns here: safer quoting and predictable restore target.
-        ADMIN_CMDS+=("rsync -a -v $(shell_quote "$SOURCE/System_Library_Adobe/") $(shell_quote "/Library/Application Support/Adobe/")")
+        ADMIN_RESTORE_SOURCES+=("$SOURCE/System_Library_Adobe/")
+        ADMIN_RESTORE_DESTINATIONS+=("/Library/Application Support/Adobe/")
     fi
 
     if [ "$NEEDS_SUDO" = true ]; then
         echo "Restoring System Scripts/Plugins..."
-        run_admin_cmds "${ADMIN_CMDS[@]}"
+        run_staged_admin_restores "$SOURCE"
     fi
 
     if [ "${ADOBE_BACKUP_HEADLESS:-false}" != "true" ]; then

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -118,6 +119,32 @@ class BackupRestoreTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Backup finished with errors", result.stderr)
 
+    def test_backup_excludes_regenerable_adobe_modules_and_recovery_data(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            adobe = home / "Library/Application Support/Adobe"
+            (adobe / "Adobe Photoshop 2026/Settings").mkdir(parents=True)
+            (adobe / "Adobe Photoshop 2026/Settings/prefs.txt").write_text("keep", encoding="utf-8")
+            model = adobe / "Adobe Photoshop 2026/AddonModules/sensei_model_cache/model.data"
+            model.parent.mkdir(parents=True)
+            model.write_text("regenerate", encoding="utf-8")
+            recovery = adobe / "Adobe Photoshop 2026/AutoRecover/recovery.psb"
+            recovery.parent.mkdir(parents=True)
+            recovery.write_text("temporary", encoding="utf-8")
+
+            result = run(
+                ["bash", str(BACKUPPER), "--backup-headless"],
+                env={**os.environ, "HOME": str(home)},
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            backup = next((home / "Desktop/Backups").glob("Adobe_Backup_*"))
+            copied = backup / "User_Library/Application Support/Adobe/Adobe Photoshop 2026"
+            self.assertEqual((copied / "Settings/prefs.txt").read_text(encoding="utf-8"), "keep")
+            self.assertFalse((copied / "AddonModules").exists())
+            self.assertFalse((copied / "AutoRecover").exists())
+
     def test_headless_restore_returns_nonzero_when_copy_fails(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -165,6 +192,78 @@ class BackupRestoreTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("privileged restore command failed", result.stderr)
             self.assertNotIn("Restore Complete", result.stdout)
+
+    def test_privileged_restore_stages_backup_before_calling_admin_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            home.mkdir()
+            backup = root / "backup"
+            item = backup / "System_Apps_Data/Applications/Adobe Test.app"
+            item.mkdir(parents=True)
+            (item / "plugin.txt").write_text("fixture", encoding="utf-8")
+            manifest(backup, "System_Apps_Data/Applications/Adobe Test.app\t/Applications\ttrue")
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            command_log = root / "admin-command.txt"
+            fake_osascript = fake_bin / "osascript"
+            fake_osascript.write_text(
+                "#!/bin/sh\nprintf '%s\\n' \"$2\" > \"$ADOBE_TEST_COMMAND_LOG\"\nexit 0\n",
+                encoding="utf-8",
+            )
+            fake_osascript.chmod(0o755)
+
+            result = run(
+                ["bash", str(BACKUPPER), "--restore-headless", str(backup)],
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                    "ADOBE_TEST_COMMAND_LOG": str(command_log),
+                },
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            command = command_log.read_text(encoding="utf-8")
+            self.assertNotIn(str(backup), command)
+            match = re.search(r"'(/private/tmp/adobe-restore\.[^']+)'", command)
+            self.assertIsNotNone(match, command)
+            self.assertFalse(Path(match.group(1)).exists())
+
+    def test_legacy_privileged_restore_stages_desktop_style_backup(self) -> None:
+        """Legacy backups have no manifest, matching the original failed restore."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            home.mkdir()
+            backup = root / "Adobe_Backup_legacy"
+            item = backup / "System_Apps_Data/Applications/Adobe Test.app"
+            item.mkdir(parents=True)
+            (item / "plugin.txt").write_text("fixture", encoding="utf-8")
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            command_log = root / "admin-command.txt"
+            fake_osascript = fake_bin / "osascript"
+            fake_osascript.write_text(
+                "#!/bin/sh\nprintf '%s\\n' \"$2\" > \"$ADOBE_TEST_COMMAND_LOG\"\nexit 0\n",
+                encoding="utf-8",
+            )
+            fake_osascript.chmod(0o755)
+
+            result = run(
+                ["bash", str(BACKUPPER), "--restore-headless", str(backup)],
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                    "ADOBE_TEST_COMMAND_LOG": str(command_log),
+                },
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            command = command_log.read_text(encoding="utf-8")
+            self.assertNotIn(str(backup), command)
+            self.assertIn("/private/tmp/adobe-restore.", command)
 
     def test_selection_file_filters_backup_sources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
