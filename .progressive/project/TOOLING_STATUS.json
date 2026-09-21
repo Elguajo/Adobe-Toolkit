@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "profile": "minimal",
+  "last_bootstrap": "2026-09-21T12:01:21+00:00",
+  "tools": {
+    "semble": {
+      "status": "not_detected",
+      "checked_at": "2026-09-21T12:00:15+00:00",
+      "version": null,
+      "evidence": "semble not found on local PATH; agent/MCP integration may still exist",
+      "notes": null
+    },
+    "serena": {
+      "status": "not_checked",
+      "checked_at": null,
+      "version": null,
+      "evidence": null,
+      "notes": null
+    },
+    "rtk": {
+      "status": "not_detected",
+      "checked_at": "2026-09-21T12:00:15+00:00",
+      "version": null,
+      "evidence": "rtk not found on local PATH; agent/MCP integration may still exist",
+      "notes": null
+    },
+    "superpowers": {
+      "status": "not_checked",
+      "checked_at": null,
+      "version": null,
+      "evidence": null,
+      "notes": null
+    },
+    "gstack": {
+      "status": "not_checked",
+      "checked_at": null,
+      "version": null,
+      "evidence": null,
+      "notes": null
+    },
+    "context7": {
+      "status": "not_checked",
+      "checked_at": null,
+      "version": null,
+      "evidence": null,
+      "notes": null
+    },
+    "github_spec_kit": {
+      "status": "not_detected",
+      "checked_at": "2026-09-21T12:00:15+00:00",
+      "version": null,
+      "evidence": "specify not found on local PATH; agent/MCP integration may still exist",
+      "notes": null
+    }
+  }
+}

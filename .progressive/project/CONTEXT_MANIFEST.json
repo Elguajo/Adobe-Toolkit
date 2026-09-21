@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "default": {
+    "required": [],
+    "skills": [],
+    "notes": []
+  },
+  "phases": {
+    ".progressive/phases/00-unified-macos-gui-specification.md": {
+      "required": [
+        "macos/AdobeBackuperGUI/Sources/AdobeBackuperGUI/BackupEngine.swift",
+        "macos/AdobeBackuper.command",
+        "macos/clean/lib/adobe-cleaner-macos.sh",
+        "run-macos.command"
+      ],
+      "skills": [
+        "architecture-decision",
+        "security-sensitive-change"
+      ],
+      "notes": [
+        "Read targeted backend contracts only; do not load all runtime integrations or completed history.",
+        "Do not implement GUI cleanup privilege elevation until its security decision is recorded."
+      ]
+    }
+  }
+}

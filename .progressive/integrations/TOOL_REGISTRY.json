@@ -1,0 +1,171 @@
+{
+  "schema": 2,
+  "adapter_contract_version": 1,
+  "adapter_defaults": {
+    "installation_source": "current official documentation",
+    "context_loading": "on_demand",
+    "invoke_only_when_materially_useful": true,
+    "installation_or_user_global_config_requires_approval": true
+  },
+  "policy": {
+    "preferred_not_mandatory": true,
+    "install_if_materially_useful": true,
+    "tiny_task_must_not_block_on_install": true,
+    "installation_source": "current official documentation",
+    "approval_required_for_user_or_global_configuration": true,
+    "installed_does_not_mean_loaded_or_invoked": true
+  },
+  "tools": {
+    "semble": {
+      "brand": "Semble",
+      "capability": "semantic_code_discovery",
+      "preferred_for": [
+        "unknown code location",
+        "intent-based discovery",
+        "unfamiliar medium/large repository"
+      ],
+      "avoid_when": [
+        "exact symbol or file is already known",
+        "tiny local task where native targeted search is sufficient"
+      ],
+      "official": "https://github.com/MinishLab/semble",
+      "probe_commands": [
+        "semble --version"
+      ],
+      "fallback": "native targeted search/read",
+      "profiles": [
+        "recommended"
+      ],
+      "extra_approval_required_for": []
+    },
+    "serena": {
+      "brand": "Serena",
+      "capability": "symbol_navigation_and_refactor",
+      "preferred_for": [
+        "known symbol references",
+        "implementations",
+        "symbol-aware refactor",
+        "semantic rename"
+      ],
+      "avoid_when": [
+        "broad intent-based discovery before a symbol is known",
+        "tiny edit where native targeted tools are already sufficient"
+      ],
+      "official": "https://github.com/oraios/serena",
+      "probe_commands": [],
+      "fallback": "language server/native targeted tools",
+      "profiles": [
+        "recommended"
+      ],
+      "extra_approval_required_for": []
+    },
+    "rtk": {
+      "brand": "RTK",
+      "capability": "compact_tool_output",
+      "preferred_for": [
+        "verbose supported test/build/lint/git output"
+      ],
+      "avoid_when": [
+        "output transformation could hide diagnostics required for correctness",
+        "the command or output shape is unsupported"
+      ],
+      "official": "https://github.com/rtk-ai/rtk",
+      "probe_commands": [
+        "rtk --version"
+      ],
+      "fallback": "raw command output with targeted filtering",
+      "profiles": [
+        "recommended"
+      ],
+      "extra_approval_required_for": [
+        "global hooks or command rewriting"
+      ]
+    },
+    "superpowers": {
+      "brand": "Superpowers",
+      "capability": "implementation_discipline",
+      "preferred_for": [
+        "TDD",
+        "implementation discipline",
+        "systematic debugging",
+        "verification"
+      ],
+      "avoid_when": [
+        "Progressive native Skills already provide sufficient discipline for the task",
+        "loading the adapter would add procedure without material benefit"
+      ],
+      "official": "https://github.com/obra/superpowers",
+      "probe_commands": [],
+      "fallback": "Progressive Context implementation/debug/quality Skills",
+      "profiles": [
+        "recommended"
+      ],
+      "extra_approval_required_for": []
+    },
+    "gstack": {
+      "brand": "gstack",
+      "capability": "challenge_review_qa_release",
+      "preferred_for": [
+        "engineering/design challenge",
+        "code review",
+        "browser QA",
+        "release checks"
+      ],
+      "avoid_when": [
+        "task does not require challenge, browser QA, review, or release checks",
+        "using the adapter as a second canonical planner or roadmap"
+      ],
+      "official": "https://github.com/garrytan/gstack",
+      "probe_commands": [],
+      "fallback": "Progressive Context review/validation plus native browser/CI tools",
+      "profiles": [
+        "recommended"
+      ],
+      "extra_approval_required_for": []
+    },
+    "context7": {
+      "brand": "Context7",
+      "capability": "fresh_library_api_docs",
+      "preferred_for": [
+        "current library/API docs",
+        "setup/configuration",
+        "version-sensitive usage"
+      ],
+      "avoid_when": [
+        "the needed fact is stable and already established in project-local evidence",
+        "security-critical claim has not been verified against an appropriate primary source"
+      ],
+      "official": "https://github.com/upstash/context7",
+      "probe_commands": [],
+      "fallback": "current official/primary documentation",
+      "profiles": [
+        "recommended"
+      ],
+      "extra_approval_required_for": []
+    },
+    "github_spec_kit": {
+      "brand": "GitHub Spec Kit",
+      "capability": "advanced_specification",
+      "preferred_for": [
+        "complex payments/auth",
+        "multi-tenancy",
+        "critical migrations",
+        "public API contracts",
+        "large ambiguous cross-system features"
+      ],
+      "avoid_when": [
+        "small or well-bounded change with low architectural uncertainty",
+        "formal specification overhead would exceed its coordination value"
+      ],
+      "official": "https://github.com/github/spec-kit",
+      "probe_commands": [
+        "specify --version"
+      ],
+      "fallback": "Progressive Context phase + ADR workflow",
+      "profiles": [
+        "advanced_spec"
+      ],
+      "extra_approval_required_for": []
+    }
+  }
+}
