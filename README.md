@@ -27,6 +27,19 @@ Adobe Environment Toolkit gives you one place to:
 - **Repair stale UI registrations** on macOS.
 - **Perform full cleanup** only after explicit confirmation.
 
+## Feature support
+
+| Feature | macOS | Windows |
+| --- | --- | --- |
+| Backup | Yes | Yes |
+| Restore | Yes | Yes |
+| Cleanup preview | Yes | Yes |
+| Full cleanup | Yes | Yes |
+| Diagnose stale UI | Yes | No |
+| Repair stale UI | Yes | No |
+| GUI | Experimental | No |
+| Automated tests | Yes | No |
+
 ## Common use cases
 
 | Situation | Recommended workflow |
@@ -71,6 +84,8 @@ Administrator privileges are requested when system locations need to be modified
 
 > [!NOTE]
 > For removing Adobe applications themselves, prefer Adobe's normal uninstallers or the official Adobe Creative Cloud Cleaner Tool first. This repository does **not** contain or distribute Adobe applications or DMG installers.
+
+`Full Cleanup` means only the cleanup paths defined in this toolkit's manifest. It does not claim to remove registry data, Adobe licensing state, installer databases, credentials, or every Adobe system component. Use Adobe's official Creative Cloud Cleaner Tool for its supported uninstall and repair workflow.
 
 ## Quick start
 
@@ -156,8 +171,18 @@ Cleanup actions use a shared manifest:
 
 It defines Adobe-related processes, services, and filesystem paths for macOS and Windows.
 
+The manifest is checked against [`shared/cleaner-manifest.schema.json`](shared/cleaner-manifest.schema.json) before macOS cleanup. Validate it locally with:
+
+```bash
+python3 shared/validate_cleaner_manifest.py shared/cleaner-manifest.json shared/cleaner-manifest.schema.json
+```
+
 > [!WARNING]
 > Full cleanup follows this manifest. Review changes to the manifest carefully because destructive cleanup uses it as the source of truth.
+
+### Exit codes
+
+The macOS cleaner uses a stable result contract: `0` for success, `1` for partial operation failure, `2` for a cancelled or invalid confirmation, `3` for an invalid manifest or backup structure, and `4` for a required unsupported dependency. A dry run returns `0` when its validation succeeds.
 
 ### macOS cleanup details
 

@@ -89,14 +89,40 @@ struct BackupEngine {
     }
 
     private func resolveScriptPath() throws -> URL {
-        let current = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        let candidates = [
-            current.appendingPathComponent("../AdobeBackuper.command"),
-            current.appendingPathComponent("macos/AdobeBackuper.command"),
-            current.appendingPathComponent("AdobeBackuper.command")
-        ]
+        let fileManager = FileManager.default
+        if let override = ProcessInfo.processInfo.environment["ADOBE_BACKUPER_SCRIPT"],
+           !override.isEmpty {
+            let url = URL(fileURLWithPath: override).standardizedFileURL
+            guard fileManager.isExecutableFile(atPath: url.path) else {
+                throw EngineError.scriptNotFound
+            }
+            return url
+        }
 
-        guard let script = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else {
+        if let bundled = Bundle.main.url(forResource: "AdobeBackuper", withExtension: "command"),
+           fileManager.isExecutableFile(atPath: bundled.path) {
+            return bundled
+        }
+
+        // SwiftPM development builds place the executable below the repository.
+        // Resolve from the executable itself so launching from Finder, Xcode, or an
+        // arbitrary working directory cannot change the backend that runs.
+        let executableDirectory = URL(fileURLWithPath: CommandLine.arguments[0])
+            .standardizedFileURL
+            .deletingLastPathComponent()
+        var candidates: [URL] = [
+            executableDirectory.appendingPathComponent("AdobeBackuper.command"),
+            executableDirectory
+                .deletingLastPathComponent()
+                .appendingPathComponent("AdobeBackuper.command")
+        ]
+        var ancestor = executableDirectory
+        for _ in 0..<6 {
+            candidates.append(ancestor.appendingPathComponent("macos/AdobeBackuper.command"))
+            ancestor.deleteLastPathComponent()
+        }
+
+        guard let script = candidates.first(where: { fileManager.isExecutableFile(atPath: $0.path) }) else {
             throw EngineError.scriptNotFound
         }
 

@@ -16,6 +16,9 @@ LIB = ROOT / "macos" / "clean" / "lib"
 LS_HELPER = LIB / "launch_services_records.py"
 LP_HELPER = LIB / "launchpad_reconcile.py"
 CLEANER = LIB / "adobe-cleaner-macos.sh"
+MANIFEST = ROOT / "shared" / "cleaner-manifest.json"
+SCHEMA = ROOT / "shared" / "cleaner-manifest.schema.json"
+MANIFEST_VALIDATOR = ROOT / "shared" / "validate_cleaner_manifest.py"
 
 
 def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -42,6 +45,64 @@ def add_app(db: Path, item_id: int, title: str, bundle_id: str) -> None:
 
 
 class LaunchServicesTests(unittest.TestCase):
+    def test_manifest_validation_rejects_unsafe_root_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / "manifest.json"
+            data = MANIFEST.read_text(encoding="utf-8").replace('"/Applications/Adobe*"', '"/"')
+            manifest.write_text(data, encoding="utf-8")
+            result = run(["python3", str(MANIFEST_VALIDATOR), str(manifest), str(SCHEMA)])
+            self.assertEqual(result.returncode, 3)
+            self.assertIn("unsafe root-level target", result.stderr)
+
+    def test_current_manifest_is_valid(self) -> None:
+        result = run(["python3", str(MANIFEST_VALIDATOR), str(MANIFEST), str(SCHEMA)])
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_dry_run_path_removal_does_not_delete_or_write_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            target = home / "Library/Application Support/Adobe"
+            target.mkdir(parents=True)
+            (target / "prefs.txt").write_text("fixture", encoding="utf-8")
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                '{"version":1,"macos":{"kill_patterns":[],"paths_remove":["~/Library/Application Support/Adobe"]},'
+                '"windows":{"processes":[],"services":[],"paths_remove":[]}}',
+                encoding="utf-8",
+            )
+            command = (
+                f'source "{CLEANER}"; CLEANER_DIR="{ROOT / "macos" / "clean"}"; '
+                f'MANIFEST="{manifest}"; DRY_RUN=1; UI_DIAGNOSTIC_ONLY=""; '
+                'adobe_cleaner_init_results; adobe_cleaner_remove_paths'
+            )
+            result = run(["bash", "-c", command], env={**os.environ, "HOME": str(home)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((target / "prefs.txt").exists())
+            self.assertFalse((home / "Library/Logs/AdobeEnvironmentToolkit-cleaner.log").exists())
+
+    def test_failed_path_removal_is_reported_as_partial_success(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            target = home / "Library/Application Support/Adobe"
+            target.mkdir(parents=True)
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                '{"version":1,"macos":{"kill_patterns":[],"paths_remove":["~/Library/Application Support/Adobe"]},'
+                '"windows":{"processes":[],"services":[],"paths_remove":[]}}',
+                encoding="utf-8",
+            )
+            command = (
+                f'source "{CLEANER}"; CLEANER_DIR="{ROOT / "macos" / "clean"}"; '
+                f'MANIFEST="{manifest}"; DRY_RUN=0; UI_DIAGNOSTIC_ONLY=""; '
+                'rm() { return 1; }; adobe_cleaner_init_results; adobe_cleaner_remove_paths; adobe_cleaner_print_report'
+            )
+            result = run(["bash", "-c", command], env={**os.environ, "HOME": str(home)})
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("Cleanup completed with warnings", result.stdout)
+            self.assertIn("FILESYSTEM: " + str(target), result.stdout)
+            self.assertTrue(target.exists())
     def test_missing_adobe_any_location_and_live_apps_are_classified_safely(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

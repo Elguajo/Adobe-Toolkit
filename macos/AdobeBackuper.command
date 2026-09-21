@@ -1,8 +1,7 @@
 #!/bin/bash
 
-# CAN: Adobe Ultimate Backup Tool (Custom Scripts Only)
-# Version: 3.5
-# Author: CAN
+# Adobe Environment Toolkit — Backup and Restore
+TOOL_VERSION="1"
 
 # ==========================================
 # CONFIGURATION
@@ -98,13 +97,13 @@ function run_admin_cmds() {
 
 function show_menu() {
     osascript <<EOD
-    set question to display dialog "Adobe Manager v3.5\n\nBackup/Restore:\n- Preferences\n- Custom Plugins Only\n- ScriptUI Panels Only (No default scripts)\n\n(Cleanest possible backup)" buttons {"Cancel", "Restore", "Backup"} default button "Backup" with icon note
+    set question to display dialog "Adobe Environment Toolkit\n\nBackup/Restore:\n- Preferences\n- Custom Plugins Only\n- ScriptUI Panels Only (No default scripts)\n\n(Cleanest possible backup)" buttons {"Cancel", "Restore", "Backup"} default button "Backup" with icon note
     return button returned of question
 EOD
 }
 
 function show_notification() {
-    osascript -e "display notification \"$1\" with title \"Adobe Manager\""
+    osascript -e "display notification \"$1\" with title \"Adobe Environment Toolkit\""
 }
 
 function show_alert() {
@@ -278,8 +277,9 @@ function backup_item_callback() {
 
     echo "Backing up $category: $source"
     mkdir -p "$(dirname "$destination")"
-    if run_rsync -a -v "${ITEM_EXCLUDES[@]}" "$source" "$(dirname "$destination")/"; then
-        manifest_add "$destination" "$restore_parent" "$admin"
+    if run_rsync -a -v "${ITEM_EXCLUDES[@]}" "$source" "$(dirname "$destination")/" \
+        && manifest_add "$destination" "$restore_parent" "$admin"; then
+        :
     else
         BACKUP_HAD_ERRORS=1
     fi
@@ -420,14 +420,20 @@ function manifest_init() {
 
     mkdir -p "$CURRENT_BACKUP_FOLDER"
     printf 'backup_path\trestore_parent\tadmin\n' > "$MANIFEST_FILE"
-    printf 'created\t%s\n' "$TIMESTAMP" > "$META_FILE"
+    printf 'backup_format_version\t1\n' > "$META_FILE"
+    printf 'tool_version\t%s\n' "$TOOL_VERSION" >> "$META_FILE"
+    printf 'platform\tmacos\n' >> "$META_FILE"
+    printf 'created\t%s\n' "$TIMESTAMP" >> "$META_FILE"
     printf 'host\t%s\n' "$(scutil --get ComputerName 2>/dev/null || hostname)" >> "$META_FILE"
 }
 
 function manifest_path() {
     local path="$1"
     path="${path%/}"
-    printf '%s' "${path#"$CURRENT_BACKUP_FOLDER"/}"
+    case "$path" in
+        "$CURRENT_BACKUP_FOLDER"/*) printf '%s' "${path#"$CURRENT_BACKUP_FOLDER"/}" ;;
+        *) echo "ERROR: Backup item is outside the backup root: $path" >&2; return 1 ;;
+    esac
 }
 
 function manifest_add() {
@@ -435,14 +441,28 @@ function manifest_add() {
     local restore_parent="$2"
     local admin="$3"
 
-    printf '%s\t%s\t%s\n' "$(manifest_path "$backup_path")" "$restore_parent" "$admin" >> "$MANIFEST_FILE"
+    local relative_path
+    relative_path=$(manifest_path "$backup_path") || return 1
+    printf '%s\t%s\t%s\n' "$relative_path" "$restore_parent" "$admin" >> "$MANIFEST_FILE"
 }
 
 function has_path_traversal() {
-    case "$1" in
-        ..|../*|*/../*|*/..) return 0 ;;
-    esac
+    local component
+    local path="$1"
+    [[ -z "$path" || "$path" == *"//"* ]] && return 0
+    IFS='/' read -r -a components <<< "$path"
+    for component in "${components[@]}"; do
+        [[ "$component" == "." || "$component" == ".." ]] && return 0
+    done
     return 1
+}
+
+function canonicalize_restore_target() {
+    python3 - "$1" <<'PY'
+import os
+import sys
+print(os.path.realpath(sys.argv[1]))
+PY
 }
 
 function is_within_dir() {
@@ -460,16 +480,87 @@ function is_within_dir() {
 function is_allowed_restore_target() {
     local restore_parent="$1"
     local admin="$2"
+    local canonical_parent user_library user_documents
+
+    [[ "$admin" == "true" || "$admin" == "false" ]] || return 1
+    has_path_traversal "$restore_parent" && return 1
+    canonical_parent=$(canonicalize_restore_target "$restore_parent") || return 1
 
     if [ "$admin" = "true" ]; then
-        is_within_dir "$restore_parent" "/Applications" && return 0
-        is_within_dir "$restore_parent" "/Library/Application Support/Adobe" && return 0
+        is_within_dir "$canonical_parent" "/Applications" && return 0
+        is_within_dir "$canonical_parent" "/Library/Application Support/Adobe" && return 0
         return 1
     fi
 
-    is_within_dir "$restore_parent" "$HOME/Library" && return 0
-    is_within_dir "$restore_parent" "$HOME/Documents/Adobe" && return 0
+    user_library=$(canonicalize_restore_target "$HOME/Library") || return 1
+    user_documents=$(canonicalize_restore_target "$HOME/Documents/Adobe") || return 1
+    is_within_dir "$canonical_parent" "$user_library" && return 0
+    is_within_dir "$canonical_parent" "$user_documents" && return 0
     return 1
+}
+
+function is_allowed_manifest_backup_path() {
+    case "$1" in
+        User_Library/*|User_Documents/*|System_Apps_Data/Applications/*|System_Library_Adobe/*) return 0 ;;
+    esac
+    return 1
+}
+
+function validate_backup_metadata() {
+    local source_root="$1" meta="$1/meta.tsv"
+    local key value version="" platform="" seen=""
+
+    [[ -f "$meta" ]] || return 0 # Legacy backups predate metadata.
+    while IFS=$'\t' read -r key value extra; do
+        [[ -z "$key" ]] && continue
+        if [[ -n "${extra:-}" || -z "$value" || "$key" == *$'\n'* || "$key" == *$'\r'* ]]; then
+            echo "ERROR: Invalid backup metadata entry." >&2
+            return 3
+        fi
+        case " $seen " in *" $key "*) echo "ERROR: Duplicate backup metadata key: $key" >&2; return 3 ;; esac
+        seen="$seen $key"
+        case "$key" in
+            backup_format_version) version="$value" ;;
+            platform) platform="$value" ;;
+        esac
+    done < "$meta"
+    if [[ -n "$version" && "$version" != "1" ]]; then
+        echo "ERROR: Unsupported backup format version: $version" >&2
+        return 3
+    fi
+    if [[ -n "$platform" && "$platform" != "macos" ]]; then
+        echo "ERROR: Backup platform must be macos, got: $platform" >&2
+        return 3
+    fi
+    return 0
+}
+
+function validate_restore_manifest() {
+    local source_root="$1" manifest="$1/manifest.tsv"
+    local header backup_path restore_parent admin extra
+
+    [[ -f "$manifest" ]] || return 1
+    IFS= read -r header < "$manifest"
+    if [[ "$header" != $'backup_path\trestore_parent\tadmin' ]]; then
+        echo "ERROR: Invalid backup manifest header." >&2
+        return 3
+    fi
+    while IFS=$'\t' read -r backup_path restore_parent admin extra; do
+        [[ -z "$backup_path$restore_parent$admin$extra" ]] && continue
+        if [[ -n "${extra:-}" || -z "$backup_path" || -z "$restore_parent" || -z "$admin" ]]; then
+            echo "ERROR: Invalid backup manifest entry." >&2
+            return 3
+        fi
+        if [[ "$backup_path" == /* ]] || has_path_traversal "$backup_path" || ! is_allowed_manifest_backup_path "$backup_path"; then
+            echo "ERROR: Refusing manifest backup path: $backup_path" >&2
+            return 3
+        fi
+        if ! is_allowed_restore_target "$restore_parent" "$admin"; then
+            echo "ERROR: Refusing manifest restore target: $restore_parent (admin=$admin)" >&2
+            return 3
+        fi
+    done < <(tail -n +2 "$manifest")
+    return 0
 }
 
 function restore_manifest_item() {
@@ -477,18 +568,6 @@ function restore_manifest_item() {
     local backup_path="$2"
     local restore_parent="$3"
     local admin="$4"
-
-    if has_path_traversal "$backup_path"; then
-        echo "ERROR: Refusing manifest item with path traversal: $backup_path" >&2
-        RESTORE_HAD_ERRORS=1
-        return
-    fi
-
-    if ! is_allowed_restore_target "$restore_parent" "$admin"; then
-        echo "ERROR: Refusing manifest item with disallowed restore target: $restore_parent (admin=$admin)" >&2
-        RESTORE_HAD_ERRORS=1
-        return
-    fi
 
     local source_path="$source_root/$backup_path"
     if [ ! -e "$source_path" ]; then
@@ -507,11 +586,11 @@ function restore_from_manifest() {
     local source_root="$1"
     local manifest="$source_root/manifest.tsv"
 
-    if [ ! -f "$manifest" ]; then
-        return 1
-    fi
+    validate_backup_metadata "$source_root" || return $?
+    validate_restore_manifest "$source_root" || return $?
 
-    while IFS=$'\t' read -r backup_path restore_parent admin; do
+    while IFS=$'\t' read -r backup_path restore_parent admin extra; do
+        [[ -z "$backup_path$restore_parent$admin$extra" ]] && continue
         restore_manifest_item "$source_root" "$backup_path" "$restore_parent" "$admin"
     done < <(tail -n +2 "$manifest")
 
@@ -576,13 +655,20 @@ function do_backup() {
 function do_restore_from_source() {
     local SOURCE="$1"
     if [[ "$SOURCE" == "UserCanceled" ]]; then exit 0; fi
+    if [[ ! -d "$SOURCE" ]]; then
+        echo "ERROR: Restore source is not a directory: $SOURCE" >&2
+        RESTORE_HAD_ERRORS=1
+        return 3
+    fi
 
     echo "--- Starting Restore ---"
 
     RESTORE_HAD_ERRORS=0
     local -a ADMIN_CMDS=()
 
-    if restore_from_manifest "$SOURCE"; then
+    restore_from_manifest "$SOURCE"
+    local manifest_status=$?
+    if [ "$manifest_status" -eq 0 ]; then
         if [ "${#ADMIN_CMDS[@]}" -gt 0 ]; then
             echo "Restoring privileged manifest items..."
             run_admin_cmds "${ADMIN_CMDS[@]}"
@@ -596,7 +682,10 @@ function do_restore_from_source() {
                 show_alert "Restore finished with errors.\nSome items failed - check the Terminal output."
             fi
         fi
-        return
+        return "$RESTORE_HAD_ERRORS"
+    elif [ "$manifest_status" -eq 3 ]; then
+        RESTORE_HAD_ERRORS=1
+        return 3
     fi
 
     # --- 1. Restore User Data ---
@@ -617,12 +706,16 @@ function do_restore_from_source() {
         NEEDS_SUDO=true
         # Safety checks: only allow restoring into /Applications via the saved structure.
         if [ ! -d "$SOURCE/System_Apps_Data/Applications" ]; then
-            show_alert "Invalid backup structure.\nExpected: System_Apps_Data/Applications\n\nAborting restore."
-            exit 1
+            echo "ERROR: Invalid backup structure: expected System_Apps_Data/Applications" >&2
+            [ "${ADOBE_BACKUP_HEADLESS:-false}" = "true" ] || show_alert "Invalid backup structure.\nExpected: System_Apps_Data/Applications\n\nAborting restore."
+            RESTORE_HAD_ERRORS=1
+            return 3
         fi
         if find "$SOURCE/System_Apps_Data" -mindepth 1 -maxdepth 1 -type d ! -name "Applications" -print -quit | grep -q .; then
-            show_alert "Invalid backup structure.\nSystem_Apps_Data contains unexpected top-level folders.\n\nAborting restore."
-            exit 1
+            echo "ERROR: Invalid backup structure: System_Apps_Data contains unexpected top-level folders" >&2
+            [ "${ADOBE_BACKUP_HEADLESS:-false}" = "true" ] || show_alert "Invalid backup structure.\nSystem_Apps_Data contains unexpected top-level folders.\n\nAborting restore."
+            RESTORE_HAD_ERRORS=1
+            return 3
         fi
         # Intentionally no exclude patterns here: safer quoting and predictable restore target.
         ADMIN_CMDS+=("rsync -a -v $(shell_quote "$SOURCE/System_Apps_Data/Applications/") $(shell_quote "/Applications/")")
@@ -631,8 +724,10 @@ function do_restore_from_source() {
     if [ -d "$SOURCE/System_Library_Adobe" ]; then
         NEEDS_SUDO=true
         if [ ! -d "$SOURCE/System_Library_Adobe" ]; then
-            show_alert "Invalid backup structure.\nExpected: System_Library_Adobe\n\nAborting restore."
-            exit 1
+            echo "ERROR: Invalid backup structure: expected System_Library_Adobe" >&2
+            [ "${ADOBE_BACKUP_HEADLESS:-false}" = "true" ] || show_alert "Invalid backup structure.\nExpected: System_Library_Adobe\n\nAborting restore."
+            RESTORE_HAD_ERRORS=1
+            return 3
         fi
         # Intentionally no exclude patterns here: safer quoting and predictable restore target.
         ADMIN_CMDS+=("rsync -a -v $(shell_quote "$SOURCE/System_Library_Adobe/") $(shell_quote "/Library/Application Support/Adobe/")")
@@ -651,6 +746,7 @@ function do_restore_from_source() {
             show_alert "Restore finished with errors.\nSome items failed - check the Terminal output."
         fi
     fi
+    return "$RESTORE_HAD_ERRORS"
 }
 
 function do_restore() {
@@ -661,6 +757,10 @@ function do_restore() {
 # ==========================================
 # EXECUTION
 # ==========================================
+
+if [[ "${ADOBE_BACKUP_LIBRARY_ONLY:-false}" == "true" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 if ! command -v rsync &> /dev/null; then
     show_alert "Error: rsync not found."
@@ -688,7 +788,6 @@ case "${1:-}" in
         fi
         RESTORE_HAD_ERRORS=0
         ADOBE_BACKUP_HEADLESS=true do_restore_from_source "$2"
-        [ "$RESTORE_HAD_ERRORS" -eq 0 ]
         exit $?
         ;;
 esac

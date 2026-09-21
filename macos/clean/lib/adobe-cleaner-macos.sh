@@ -4,13 +4,86 @@ adobe_cleaner_log_line() {
     local msg="$1"
     local log_dir="${HOME}/Library/Logs"
     local log_file="${log_dir}/AdobeEnvironmentToolkit-cleaner.log"
+    if [[ "${DRY_RUN:-0}" == "1" || "${UI_DIAGNOSTIC_ONLY:-}" == "1" ]]; then
+        return 0
+    fi
     mkdir -p "$log_dir" 2>/dev/null || true
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$msg" >>"$log_file" 2>/dev/null || true
 }
 
 adobe_cleaner_manifest_array() {
     local key="$1"
-    python3 "${CLEANER_DIR}/lib/json_array.py" "${MANIFEST}" "$key" 2>/dev/null
+    python3 "${CLEANER_DIR}/lib/json_array.py" "${MANIFEST}" "$key"
+}
+
+adobe_cleaner_init_results() {
+    local category state
+    for category in PROCESSES LAUNCHD FILESYSTEM UI POST_ACTIONS; do
+        for state in SUCCESS FAILED SKIPPED NOT_FOUND; do
+            eval "RESULT_${category}_${state}=0"
+        done
+    done
+    CLEANER_FAILED_TARGETS=""
+}
+
+adobe_cleaner_record_result() {
+    local category="$1" state="$2" detail="$3" counter
+    case "$category" in
+        processes) category="PROCESSES" ;;
+        launchd) category="LAUNCHD" ;;
+        filesystem) category="FILESYSTEM" ;;
+        ui) category="UI" ;;
+        post_actions) category="POST_ACTIONS" ;;
+        *) return 1 ;;
+    esac
+    case "$state" in
+        success) state="SUCCESS" ;;
+        failed) state="FAILED" ;;
+        skipped) state="SKIPPED" ;;
+        not_found) state="NOT_FOUND" ;;
+        *) return 1 ;;
+    esac
+    counter="RESULT_${category}_${state}"
+    eval "$counter=\$(( $counter + 1 ))"
+    adobe_cleaner_log_line "result category=${category} state=${state} target=${detail}"
+    if [[ "$state" == "FAILED" ]]; then
+        CLEANER_FAILED_TARGETS+="${category}: ${detail}"$'\n'
+    fi
+}
+
+adobe_cleaner_print_result_category() {
+    local label="$1" category="$2"
+    local success failed skipped not_found
+    eval "success=\${RESULT_${category}_SUCCESS}"
+    eval "failed=\${RESULT_${category}_FAILED}"
+    eval "skipped=\${RESULT_${category}_SKIPPED}"
+    eval "not_found=\${RESULT_${category}_NOT_FOUND}"
+    printf '%s:\n  success: %s\n  failed: %s\n  skipped: %s\n  not found: %s\n' \
+        "$label" "$success" "$failed" "$skipped" "$not_found"
+}
+
+adobe_cleaner_print_report() {
+    local failed_total
+    failed_total=$((RESULT_PROCESSES_FAILED + RESULT_LAUNCHD_FAILED + RESULT_FILESYSTEM_FAILED + RESULT_UI_FAILED + RESULT_POST_ACTIONS_FAILED))
+    echo ""
+    if [[ "$failed_total" -eq 0 ]]; then
+        echo "Cleanup completed successfully"
+    else
+        echo "Cleanup completed with warnings"
+    fi
+    adobe_cleaner_print_result_category "Processes" "PROCESSES"
+    adobe_cleaner_print_result_category "Launchd" "LAUNCHD"
+    adobe_cleaner_print_result_category "Filesystem" "FILESYSTEM"
+    adobe_cleaner_print_result_category "UI reconciliation" "UI"
+    adobe_cleaner_print_result_category "Post-actions" "POST_ACTIONS"
+    if [[ "$failed_total" -ne 0 ]]; then
+        echo "Failed targets:"
+        printf '%s' "$CLEANER_FAILED_TARGETS"
+        echo "Result: PARTIAL SUCCESS"
+        return 1
+    fi
+    echo "Result: SUCCESS"
+    return 0
 }
 
 adobe_cleaner_kill_processes() {
@@ -23,9 +96,20 @@ adobe_cleaner_kill_processes() {
         if pgrep -f "$pat" >/dev/null 2>&1; then
             echo "Stopping matches: $pat"
             adobe_cleaner_log_line "kill pattern: $pat"
-            if [[ "$DRY_RUN" != "1" ]]; then
-                pkill -f "$pat" 2>/dev/null || true
+            if [[ "$DRY_RUN" == "1" ]]; then
+                echo "[dry-run] pkill -f $(printf '%q' "$pat")"
+                adobe_cleaner_record_result processes skipped "$pat"
+            elif pkill -f "$pat" 2>/dev/null; then
+                adobe_cleaner_record_result processes success "$pat"
+            else
+                echo "Failed to stop matches: $pat" >&2
+                adobe_cleaner_record_result processes failed "$pat"
             fi
+        else
+            case "$?" in
+                1) adobe_cleaner_record_result processes not_found "$pat" ;;
+                *) echo "Could not inspect process pattern: $pat" >&2; adobe_cleaner_record_result processes failed "$pat" ;;
+            esac
         fi
     done < <(adobe_cleaner_manifest_array "macos.kill_patterns")
     echo "Done."
@@ -35,21 +119,27 @@ adobe_cleaner_bootout_plist() {
     local plist="$1"
     local kind="$2"
     if [[ ! -f "$plist" ]]; then
+        adobe_cleaner_record_result launchd not_found "$plist"
         return 0
     fi
     adobe_cleaner_log_line "launchd: $plist ($kind)"
     if [[ "$DRY_RUN" == "1" ]]; then
         echo "[dry-run] bootout: $plist"
+        adobe_cleaner_record_result launchd skipped "$plist"
         return 0
     fi
     if [[ "$kind" == "user" ]]; then
         launchctl bootout "gui/$(id -u)" "$plist" 2>/dev/null \
-            || launchctl unload "$plist" 2>/dev/null \
-            || true
+            || launchctl unload "$plist" 2>/dev/null
     else
         sudo launchctl bootout system "$plist" 2>/dev/null \
-            || sudo launchctl unload "$plist" 2>/dev/null \
-            || true
+            || sudo launchctl unload "$plist" 2>/dev/null
+    fi
+    if [[ "$?" -eq 0 ]]; then
+        adobe_cleaner_record_result launchd success "$plist"
+    else
+        echo "Failed to unload: $plist" >&2
+        adobe_cleaner_record_result launchd failed "$plist"
     fi
 }
 
@@ -57,44 +147,56 @@ adobe_cleaner_unload_launchd() {
     echo ""
     echo -e "${RED}Unloading LaunchAgents / LaunchDaemons (com.adobe.*)...${NC}"
     local file
-    find /Library/LaunchAgents -name "com.adobe.*" -print0 2>/dev/null | while IFS= read -r -d '' file; do
+    while IFS= read -r -d '' file; do
         echo "Unload: $file"
         adobe_cleaner_bootout_plist "$file" "system"
-    done
-    find /Library/LaunchDaemons -name "com.adobe.*" -print0 2>/dev/null | while IFS= read -r -d '' file; do
+    done < <(find /Library/LaunchAgents -name "com.adobe.*" -print0 2>/dev/null)
+    while IFS= read -r -d '' file; do
         echo "Unload: $file"
         adobe_cleaner_bootout_plist "$file" "system"
-    done
-    find "${HOME}/Library/LaunchAgents" -name "com.adobe.*" -print0 2>/dev/null | while IFS= read -r -d '' file; do
+    done < <(find /Library/LaunchDaemons -name "com.adobe.*" -print0 2>/dev/null)
+    while IFS= read -r -d '' file; do
         echo "Unload: $file"
         adobe_cleaner_bootout_plist "$file" "user"
-    done
-    find "${HOME}/Library/LaunchAgents" -name "com.Adobe.*" -print0 2>/dev/null | while IFS= read -r -d '' file; do
+    done < <(find "${HOME}/Library/LaunchAgents" -name "com.adobe.*" -print0 2>/dev/null)
+    while IFS= read -r -d '' file; do
         echo "Unload: $file"
         adobe_cleaner_bootout_plist "$file" "user"
-    done
+    done < <(find "${HOME}/Library/LaunchAgents" -name "com.Adobe.*" -print0 2>/dev/null)
     echo "Launchd pass done."
 }
 
 adobe_cleaner_remove_paths() {
     echo ""
     echo -e "${RED}Removing paths...${NC}"
-    local target
-    while IFS= read -r target; do
+    local status target
+    while IFS=$'\t' read -r status target; do
         [[ -z "$target" ]] && continue
+        if [[ "$status" == "NOT_FOUND" ]]; then
+            echo "Not found: $target"
+            adobe_cleaner_record_result filesystem not_found "$target"
+            continue
+        fi
         adobe_cleaner_capture_application_provenance "$target"
         if [[ "$DRY_RUN" == "1" ]]; then
             echo "[dry-run] rm -rf $(printf '%q' "$target")"
             adobe_cleaner_log_line "dry-run rm: $target"
+            adobe_cleaner_record_result filesystem skipped "$target"
             continue
         fi
         adobe_cleaner_log_line "rm -rf: $target"
         if [[ "$target" == "${HOME}/"* ]]; then
-            rm -rf "$target" 2>/dev/null || true
+            rm -rf "$target" 2>/dev/null
         else
-            sudo rm -rf "$target" 2>/dev/null || true
+            sudo rm -rf "$target" 2>/dev/null
         fi
-    done < <(python3 "${CLEANER_DIR}/lib/expand_macos_paths.py" "${MANIFEST}")
+        if [[ "$?" -eq 0 ]]; then
+            adobe_cleaner_record_result filesystem success "$target"
+        else
+            echo "Failed to remove: $target" >&2
+            adobe_cleaner_record_result filesystem failed "$target"
+        fi
+    done < <(python3 "${CLEANER_DIR}/lib/expand_macos_paths.py" "${MANIFEST}" --plan)
     echo "Removal pass done."
 }
 
@@ -155,6 +257,7 @@ adobe_cleaner_refresh_launch_services() {
     if [[ ! -x "$lsregister" ]]; then
         echo "Launch Services refresh skipped (lsregister is unavailable)."
         adobe_cleaner_log_line "launch services: skipped; lsregister unavailable"
+        adobe_cleaner_record_result ui skipped "Launch Services (lsregister unavailable)"
         return 0
     fi
 
@@ -163,6 +266,7 @@ adobe_cleaner_refresh_launch_services() {
 
     if ! adobe_cleaner_collect_launch_services "$lsregister"; then
         echo "Launch Services refresh skipped (registration dump is unavailable)."
+        adobe_cleaner_record_result ui skipped "Launch Services registration dump"
         return 0
     fi
     action_label="dry-run"
@@ -180,19 +284,24 @@ adobe_cleaner_refresh_launch_services() {
         if [[ "$DRY_RUN" == "1" || "$UI_DIAGNOSTIC_ONLY" == "1" ]]; then
             echo "[$action_label] would unregister: $stale_path"
             adobe_cleaner_log_line "launch services: would unregister bundle_id=${bundle_id:-$canonical_id} path=$stale_path"
+            adobe_cleaner_record_result ui skipped "Launch Services: $stale_path"
             continue
         fi
         if "$lsregister" -u "$stale_path" >/dev/null 2>&1; then
             result="success"
             ADOBE_UI_CHANGED="1"
+            adobe_cleaner_record_result ui success "Launch Services: $stale_path"
         else
             result="failed"
+            echo "Failed to unregister stale registration: $stale_path" >&2
+            adobe_cleaner_record_result ui failed "Launch Services: $stale_path"
         fi
         adobe_cleaner_log_line "launch services: unregister result=$result bundle_id=${bundle_id:-$canonical_id} path=$stale_path"
     done <<< "$LAUNCH_SERVICES_STALE_RECORDS"
 
     if [[ "$stale_count" -eq 0 ]]; then
         echo "No stale Adobe Launch Services registrations found."
+        adobe_cleaner_record_result ui not_found "Launch Services stale registrations"
         return 0
     fi
 
@@ -200,11 +309,15 @@ adobe_cleaner_refresh_launch_services() {
     if [[ "$DRY_RUN" == "1" || "$UI_DIAGNOSTIC_ONLY" == "1" ]]; then
         echo "[$action_label] would run lsregister -gc."
         adobe_cleaner_log_line "launch services: would run garbage collection; stale apps=$stale_count"
+        adobe_cleaner_record_result ui skipped "Launch Services garbage collection"
     else
         if "$lsregister" -gc >/dev/null 2>&1; then
             adobe_cleaner_log_line "launch services: garbage collection result=success; stale apps=$stale_count"
+            adobe_cleaner_record_result ui success "Launch Services garbage collection"
         else
             adobe_cleaner_log_line "launch services: garbage collection result=failed; stale apps=$stale_count"
+            echo "Launch Services garbage collection failed." >&2
+            adobe_cleaner_record_result ui failed "Launch Services garbage collection"
         fi
     fi
 }
@@ -222,16 +335,19 @@ adobe_cleaner_reconcile_launchpad() {
     if [[ ! -f "$db" ]]; then
         echo "Launchpad reconciliation skipped (database not found)."
         adobe_cleaner_log_line "launchpad: skipped; database not found: $db"
+        adobe_cleaner_record_result ui not_found "Launchpad database"
         return 0
     fi
     if ! command -v "$sqlite3_bin" >/dev/null 2>&1; then
         echo "Launchpad reconciliation skipped (sqlite3 is unavailable)."
         adobe_cleaner_log_line "launchpad: skipped; sqlite3 unavailable"
+        adobe_cleaner_record_result ui skipped "Launchpad (sqlite3 unavailable)"
         return 0
     fi
     if [[ "$LAUNCH_SERVICES_AVAILABLE" != "1" ]]; then
         echo "Launchpad reconciliation skipped (cannot confirm live applications without lsregister)."
         adobe_cleaner_log_line "launchpad: skipped; Launch Services data unavailable"
+        adobe_cleaner_record_result ui skipped "Launchpad (Launch Services unavailable)"
         return 0
     fi
 
@@ -242,6 +358,7 @@ adobe_cleaner_reconcile_launchpad() {
     if [[ "$plan_status" -ne 0 ]]; then
         echo "Launchpad reconciliation skipped (unsupported database schema)."
         adobe_cleaner_log_line "launchpad: skipped; schema validation failed: $plan_output"
+        adobe_cleaner_record_result ui skipped "Launchpad database schema"
         return 0
     fi
 
@@ -265,6 +382,7 @@ adobe_cleaner_reconcile_launchpad() {
 
     if [[ "${#item_args[@]}" -eq 0 ]]; then
         echo "No Launchpad records require removal; Dock will not be restarted for Launchpad."
+        adobe_cleaner_record_result ui not_found "Launchpad orphan records"
         return 0
     fi
     if [[ "$DRY_RUN" == "1" || "$UI_DIAGNOSTIC_ONLY" == "1" ]]; then
@@ -272,12 +390,14 @@ adobe_cleaner_reconcile_launchpad() {
         [[ "$UI_DIAGNOSTIC_ONLY" == "1" ]] && action_label="diagnose"
         echo "[$action_label] would back up the database, remove $remove_count Launchpad record(s) in one transaction, and restart Dock."
         adobe_cleaner_log_line "launchpad: would apply transaction; records=$remove_count"
+        adobe_cleaner_record_result ui skipped "Launchpad transaction ($remove_count records)"
         ADOBE_UI_CHANGED="1"
         return 0
     fi
     if ! cp -p "$db" "$backup" 2>/dev/null || ! cmp -s "$db" "$backup"; then
         echo "Launchpad reconciliation skipped (database backup failed)."
         adobe_cleaner_log_line "launchpad: backup failed: $backup"
+        adobe_cleaner_record_result ui failed "Launchpad database backup: $backup"
         return 0
     fi
     adobe_cleaner_log_line "launchpad: backup created: $backup"
@@ -285,9 +405,11 @@ adobe_cleaner_reconcile_launchpad() {
         echo "Launchpad database transaction completed."
         adobe_cleaner_log_line "launchpad: transaction result=success details=$plan_output"
         ADOBE_UI_CHANGED="1"
+        adobe_cleaner_record_result ui success "Launchpad transaction ($remove_count records)"
     else
         echo "Launchpad reconciliation failed; transaction was rolled back."
         adobe_cleaner_log_line "launchpad: transaction result=failed details=$plan_output"
+        adobe_cleaner_record_result ui failed "Launchpad transaction ($remove_count records)"
     fi
 }
 
@@ -299,6 +421,7 @@ adobe_cleaner_restart_dock_if_needed() {
             [[ "$UI_DIAGNOSTIC_ONLY" == "1" ]] && action_label="diagnose"
             echo "[$action_label] Dock would not be restarted (no relevant UI changes planned)."
             adobe_cleaner_log_line "launchpad: Dock would not be restarted; no relevant UI changes"
+            adobe_cleaner_record_result post_actions skipped "Dock restart (no UI changes planned)"
         fi
         return 0
     fi
@@ -307,18 +430,23 @@ adobe_cleaner_restart_dock_if_needed() {
         [[ "$UI_DIAGNOSTIC_ONLY" == "1" ]] && action_label="diagnose"
         echo "[$action_label] Dock would be restarted."
         adobe_cleaner_log_line "launchpad: Dock would be restarted"
+        adobe_cleaner_record_result post_actions skipped "Dock restart"
         return 0
     fi
     if pgrep -x Dock >/dev/null 2>&1; then
         if killall Dock >/dev/null 2>&1; then
             echo "Launchpad refreshed."
             adobe_cleaner_log_line "launchpad: Dock restart result=success"
+            adobe_cleaner_record_result post_actions success "Dock restart"
         else
             adobe_cleaner_log_line "launchpad: Dock restart result=failed"
+            echo "Failed to restart Dock." >&2
+            adobe_cleaner_record_result post_actions failed "Dock restart"
         fi
     else
         echo "Dock is not running; no restart was needed."
         adobe_cleaner_log_line "launchpad: Dock restart skipped; Dock not running"
+        adobe_cleaner_record_result post_actions not_found "Dock"
     fi
 }
 
@@ -328,11 +456,16 @@ adobe_cleaner_flush_dns() {
     adobe_cleaner_log_line "dns flush dry_run=${DRY_RUN}"
     if [[ "$DRY_RUN" == "1" ]]; then
         echo "[dry-run] dscacheutil -flushcache; killall -HUP mDNSResponder"
+        adobe_cleaner_record_result post_actions skipped "DNS cache flush"
         return 0
     fi
-    sudo dscacheutil -flushcache 2>/dev/null || true
-    sudo killall -HUP mDNSResponder 2>/dev/null || true
-    echo "Done."
+    if sudo dscacheutil -flushcache 2>/dev/null && sudo killall -HUP mDNSResponder 2>/dev/null; then
+        adobe_cleaner_record_result post_actions success "DNS cache flush"
+        echo "Done."
+    else
+        echo "DNS cache flush failed." >&2
+        adobe_cleaner_record_result post_actions failed "DNS cache flush"
+    fi
 }
 
 adobe_cleaner_sudo_keep_alive() {
@@ -409,8 +542,9 @@ adobe_cleaner_confirm_full() {
     if [[ "$line" != "YES DELETE ADOBE" ]]; then
         echo "Cancelled."
         adobe_cleaner_log_line "aborted: confirmation failed"
-        exit 1
+        return 2
     fi
+    return 0
 }
 
 adobe_cleaner_main() {
@@ -425,14 +559,22 @@ adobe_cleaner_main() {
 
     if [[ ! -f "$MANIFEST" ]]; then
         echo "Missing cleaner manifest: $MANIFEST"
-        exit 1
+        return 3
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Python 3 is required to validate the cleaner manifest." >&2
+        return 4
+    fi
+    if ! python3 "${CLEANER_DIR}/../../shared/validate_cleaner_manifest.py" \
+        "$MANIFEST" "${CLEANER_DIR}/../../shared/cleaner-manifest.schema.json"; then
+        return 3
     fi
 
     adobe_cleaner_parse_args "$@"
 
     if [[ "$MODE" == "help" ]]; then
         adobe_cleaner_print_help
-        exit 0
+        return 0
     fi
 
     clear
@@ -455,6 +597,7 @@ adobe_cleaner_main() {
     LAUNCH_SERVICES_STALE_RECORDS=""
     ADOBE_UI_CHANGED="0"
     UI_DIAGNOSTIC_ONLY=""
+    adobe_cleaner_init_results
 
     if [[ "$MODE" == "diagnose" ]]; then
         UI_DIAGNOSTIC_ONLY="1"
@@ -462,7 +605,8 @@ adobe_cleaner_main() {
         adobe_cleaner_reconcile_launchpad
         adobe_cleaner_restart_dock_if_needed
         adobe_cleaner_log_line "=== end diagnose ==="
-        return 0
+        adobe_cleaner_print_report
+        return $?
     fi
 
     if [[ "$MODE" == "repair-ui" ]]; then
@@ -470,16 +614,22 @@ adobe_cleaner_main() {
         adobe_cleaner_reconcile_launchpad
         adobe_cleaner_restart_dock_if_needed
         adobe_cleaner_log_line "=== end repair-ui ==="
-        return 0
+        adobe_cleaner_print_report
+        return $?
     fi
 
     if [[ "$MODE" == "full" ]]; then
-        adobe_cleaner_confirm_full
+        adobe_cleaner_confirm_full || return $?
     fi
 
     if [[ "$DRY_RUN" != "1" ]]; then
         echo "Administrator rights required for system paths."
-        sudo -v
+        if ! sudo -v; then
+            echo "Administrator authorization failed." >&2
+            adobe_cleaner_record_result post_actions failed "administrator authorization"
+            adobe_cleaner_print_report
+            return 1
+        fi
         adobe_cleaner_sudo_keep_alive
     fi
 
@@ -488,10 +638,10 @@ adobe_cleaner_main() {
     if [[ "$MODE" == "kill" ]]; then
         adobe_cleaner_unload_launchd
         adobe_cleaner_log_line "=== end kill-only ==="
-        echo ""
-        echo -e "${GREEN}Kill-only finished.${NC}"
+        adobe_cleaner_print_report
+        local result=$?
         read -r -p "Press Enter to close..." _ || true
-        exit 0
+        return "$result"
     fi
 
     adobe_cleaner_unload_launchd
@@ -502,10 +652,8 @@ adobe_cleaner_main() {
     adobe_cleaner_flush_dns
 
     adobe_cleaner_log_line "=== end full ==="
-    echo ""
-    echo -e "${CYAN}=================================================${NC}"
-    echo -e "${GREEN}   Done. Reboot recommended.                      ${NC}"
-    echo -e "${CYAN}=================================================${NC}"
-    echo ""
+    adobe_cleaner_print_report
+    local result=$?
     read -r -p "Press Enter to close..." _ || true
+    return "$result"
 }
