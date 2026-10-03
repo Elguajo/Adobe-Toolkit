@@ -1,47 +1,48 @@
 # Next Session
 
-> Volatile hot context. Overwrite on each meaningful handoff; durable phase history belongs in completed phase `Completion Record`s.
+> Volatile hot context. Durable status belongs in Roadmap and the current Phase.
 
 Outcome: IN PROGRESS
 
 ## Current phase
 
-Phase 01 — Native Windows GUI parity specification
+Phase 02 — Native macOS GUI v1 implementation
 
 ## Completed this session
 
-- Adopted the Personal Progressive Context Runtime without changing user-global agent configuration.
-- Reconstructed compact product state from the existing README, scripts, manifest, GUI package, and tests.
-- Selected the minimal tooling profile; no optional tools were installed.
-- Specified the unified macOS GUI navigation and module state model in Phase 00; the specification preserves independent CLI entry points and prohibits a GUI fallback to a second Terminal window.
-- Chose native apps: SwiftUI in `gui/adobe-toolkit/macos/` first, followed by WinUI in `gui/adobe-toolkit/windows/`; they share contracts/fixtures but not UI code (`ADR-002`).
-- Bound macOS GUI v1 to Backup, Restore, Cleanup Preview, and Diagnose; Full Cleanup and Repair remain CLI-only and unavailable in GUI until future explicit user authorization.
-- Added and committed safe fake-backend fixture tests for preview immutability, unsupported Full Cleanup/Repair, backend failure, cancellation, and malformed/inconsistent JSON handling (`1566f20`).
-- Selected Phase 01 with a Windows-specific safety boundary: the current cmd/PowerShell entry points have no machine-readable GUI contract, so the GUI must not parse their output or use them as a fallback.
-- Verified that `windows/clean/AdobeCleaner.ps1 -Mode DryRunFull` stops processes/services and writes a log before displaying its plan. It is therefore not a non-mutating GUI cleanup preview.
+- Completed task 1: a macOS 12+ Swift Package with six-section SwiftUI content in one AppKit window, a typed actor-isolated adapter, safe resource resolution, capability/result validation, and explicit fixture mode.
+- Normal launch stays Unavailable because no managed v1 backend is bundled. Privileged operations, backup creation, and restore remain unavailable; no CLI/backend behavior changed.
+- Added adapter, temporary managed-executable, and UI-model tests; documented build/run and safe interface checks in `gui/adobe-toolkit/macos/README.md`.
 
 ## Verification evidence
 
-- `python3 .progressive/tools/audit.py --root .` → PASS (0 errors; expected local-vs-global Skill collision warnings only) after selecting Phase 01.
-- `python3 .progressive/tools/context_compile.py --root .` → PASS.
+- `swift test --package-path gui/adobe-toolkit/macos` → 20/20 passed.
+- `swift build --package-path gui/adobe-toolkit/macos -c release` → PASS; Mach-O minimum deployment version observed as 12.0.
 - `python3 -m unittest discover -s tests -v` → 32/32 passed.
+- Native UI on macOS 15.8.1 → six-section navigation, normal Unavailable states, fixture success/cancelled/failed reports, retained output, disabled privileged controls, Escape cancellation, and window closing during fixture preview observed. Adapter/model tests verify locking, navigation, cancellation, and retry.
+- Launch from `/tmp` used the absolute executable path; bundled fixture copies match Phase 00 originals byte-for-byte. A local unsigned wrapper under ignored `.build/` was used for native UI inspection; production packaging is not delivered.
+- Progressive audit → PASS (0 errors; 12 existing local/global Skill collision warnings).
+- Context compiler → PASS; selects Phase 02 and task 2 with macOS specification/contract, without Windows phase preload.
 - `git diff --check` → PASS.
 
 ## Current working state
 
 RUNNABLE / GREEN
 
+Task 1 is complete; Phase 02 remains active. The app supports fixture inspection and safe Unavailable states. Real v1 backend modes and mutation input flows are not implemented.
+
 ## Blockers / uncertainty
 
-- Privileged GUI operations are explicitly out of scope until the user authorizes a future phase.
-- The existing Windows backend does not advertise a structured non-interactive capability/result contract. A future Windows backend-hardening phase must supply it before a WinUI adapter can run operations.
+- No blocker for task 2. Align backend capability `summary.operations` and backup-item fields with the scaffold, and establish child-process cancellation semantics before connecting mutation.
+- The macOS 12 deployment target is verified by compilation/binary metadata; execution on Monterey hardware remains unverified.
+- Windows and privileged GUI operations remain out of scope. Previously existing documentation edits and the untracked GUI image were preserved.
 
 ## Next action
 
-Specify the Windows interaction boundary and typed adapter contract. Keep all operations unavailable until a future managed backend advertises the required structured capability; do not begin privileged GUI operations.
+Complete task 2 only: implement optional non-interactive macOS v1 backend modes and managed capability discovery while preserving legacy CLI behavior.
 
 ## NEXT SESSION PROMPT
 
 ```text
-Continue Phase 01 only: define the Windows WinUI interaction and adapter-contract specification. Preserve the macOS v1 result-envelope semantics and fixture safety properties. Do not parse legacy cmd/PowerShell output, invoke the current DryRunFull command as a GUI preview, or begin privileged GUI operations without explicit user authorization.
+Continue Phase 02, task 2 only: implement contract-backed non-interactive macOS v1 backend modes and managed capability discovery for the existing typed adapter at gui/adobe-toolkit/macos/. Start from the current Phase, INTERACTION_SPEC.md, shared/contracts/macos-gui-adapter-v1.md, and the scaffold README; inspect only relevant backend dispatch/functions and analogous tests. Align capability summary.operations and typed item fields. Preserve legacy CLI workflows, keep Cleanup Preview and Diagnose non-mutating, and validate only with temporary data/fake resources. Do not begin Windows, privilege elevation, Full Cleanup/Repair, real Adobe-data validation, or the task 3 screen/input integration. Run focused/backend tests and the local Swift build/tests, then persist evidence in the current phase and NEXT_SESSION.
 ```

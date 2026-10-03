@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "operation": "diagnose.run",
+  "status": "failed",
+  "exitCode": 7,
+  "mutates": false,
+  "summary": {},
+  "items": [],
+  "warnings": [],
+  "errors": ["Fixture backend failure"],
+  "logPath": null
+}

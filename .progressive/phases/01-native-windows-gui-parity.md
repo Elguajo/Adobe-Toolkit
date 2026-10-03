@@ -1,5 +1,7 @@
 # Phase 01 — Native Windows GUI parity specification
 
+Deferred by user direction on 2026-10-03: current delivery is macOS only. This phase is unfinished and outside current execution; resume only when the user requests Windows work.
+
 ## Goal
 
 Produce an implementation-ready, safety-first specification for one WinUI application at `gui/adobe-toolkit/windows/`. It preserves the independent Windows cmd/PowerShell workflows, shares the macOS GUI v1 result-envelope semantics and fixture safety properties, and does not implement a UI, a backend, or privileged operations.

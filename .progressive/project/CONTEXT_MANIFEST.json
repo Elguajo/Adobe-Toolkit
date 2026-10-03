@@ -39,6 +39,23 @@
         "AdobeCleaner.ps1 -Mode DryRunFull currently stops processes/services and writes a log; it is not a GUI-safe cleanup preview.",
         "Do not implement Windows GUI privilege elevation, Full Cleanup, or Repair without future explicit user authorization."
       ]
+    },
+    ".progressive/phases/02-native-macos-gui-implementation.md": {
+      "required": [
+        "gui/adobe-toolkit/macos/INTERACTION_SPEC.md",
+        "shared/contracts/macos-gui-adapter-v1.md"
+      ],
+      "skills": [
+        "implementation-execution",
+        "security-sensitive-change"
+      ],
+      "notes": [
+        "Current delivery is macOS only. Windows Phase 01 is deferred; do not begin Windows work.",
+        "Phase 00 completed specification and fixtures, not the new app or --ui-json backend modes.",
+        "The delivery location is gui/adobe-toolkit/macos/; macos/AdobeBackuperGUI/ is experimental reference only.",
+        "Task 1 delivered the SwiftUI shell and typed adapter with safe fixtures. The next unresolved task is non-interactive v1 backend modes and capability discovery; absent managed backend capability must remain unavailable.",
+        "Preserve CLI behavior. Do not implement privileged GUI operations or validate against real user Adobe data."
+      ]
     }
   }
 }

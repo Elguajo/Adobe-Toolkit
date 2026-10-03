@@ -14,7 +14,7 @@ Provide reliable, cross-platform tools to back up, restore, diagnose, and clean 
 - Maintain the current macOS and Windows CLI entry points and backup workflows.
 - Keep cleanup targets in the shared manifest and require preview/confirmation before destructive cleanup.
 - Preserve safe-copy restore as the default.
-- Build native desktop GUIs in `gui/adobe-toolkit/`: SwiftUI for macOS first, then WinUI for Windows, without duplicating backend behavior or changing existing Terminal workflows.
+- Current delivery is macOS only: build the native SwiftUI GUI in `gui/adobe-toolkit/macos/` without duplicating backend behavior or changing existing Terminal workflows. Windows GUI work is deferred until the user resumes it.
 
 ## Explicit constraints
 
@@ -27,7 +27,7 @@ Provide reliable, cross-platform tools to back up, restore, diagnose, and clean 
 ## Material assumptions
 
 - macOS ships the OS tools used by the existing scripts; missing tools are reported rather than silently bypassed.
-- Windows backend hardening and CI remain separate work; Windows GUI parity follows the macOS GUI after macOS acceptance evidence exists.
+- Existing Windows CLI support remains; Windows GUI specification, implementation, backend hardening, and CI are outside current delivery.
 
 ## Ubiquitous Language
 
@@ -39,13 +39,14 @@ Provide reliable, cross-platform tools to back up, restore, diagnose, and clean 
 
 - Implementing privileged GUI operations before the user explicitly authorizes that scope.
 - Replacing the existing CLI scripts or changing Windows behavior.
+- Windows GUI specification or implementation.
 - Installing optional agent tools or configuring user-global agent settings.
 
 ## Success criteria
 
 - A new agent can resume work from a compact default read set and identify one current phase.
-- The active phase specifies a safe, implementation-ready direction for the macOS-native GUI and a contract boundary that the later Windows UI can share.
-- Existing CLI behavior and tests remain the source of truth while GUI work is planned.
+- The active phase delivers the macOS-native GUI against the accepted interaction specification and adapter contract.
+- Existing CLI behavior and tests remain the source of truth during GUI implementation.
 
 ## Classification
 

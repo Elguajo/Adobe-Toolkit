@@ -2,7 +2,7 @@
 
 ## Recommended stack
 
-- Runtime/framework: Bash on macOS, PowerShell on Windows, Swift 5.9/SwiftUI for the planned macOS 12+ GUI, and WinUI for the later Windows GUI; Python 3 standard-library helpers/tests.
+- Runtime/framework: Bash on macOS, PowerShell for the existing Windows CLI, and Swift 5.9/SwiftUI for the macOS 12+ GUI; Python 3 standard-library helpers/tests. WinUI remains the accepted direction for deferred Windows GUI work.
 - Data/storage: user-selected backup directories containing `manifest.tsv` and `meta.tsv`; shared JSON cleanup manifest; local cleaner logs.
 - Deployment/hosting: local scripts and a Swift Package executable; no service, database, cloud, or telemetry component.
 - Important providers/dependencies: macOS `rsync`, `osascript`, `launchctl`, `lsregister`, `sqlite3`; PowerShell on Windows.
@@ -19,10 +19,10 @@ run-macos.command / run-windows.cmd     (independent CLI workflows)
         ├── macOS / Windows backup-restore backend ─ backup manifest + metadata
         └── macOS / Windows cleaner backend ───────── shared/cleaner-manifest.json
 
-gui/adobe-toolkit/macos/                 (planned SwiftUI application; Phase 00)
+gui/adobe-toolkit/macos/                 (SwiftUI specification: Phase 00; implementation: Phase 02)
         └── macOS adapter ──────────────────── existing macOS headless backend contracts
 
-gui/adobe-toolkit/windows/               (planned WinUI application; Phase 01)
+gui/adobe-toolkit/windows/               (deferred WinUI application; Phase 01)
         └── Windows adapter ────────────────── existing Windows backend contracts
 
 shared contracts + fixtures              (versioned result schemas; no shared UI code)
@@ -33,7 +33,7 @@ shared contracts + fixtures              (versioned result schemas; no shared UI
 - Cleanup targets and process/service lists → `shared/cleaner-manifest.json`.
 - macOS backup/restore behavior and allowlist validation → `macos/AdobeBackuper.command`.
 - macOS cleanup execution/reporting → `macos/clean/lib/adobe-cleaner-macos.sh`.
-- Native GUI placement and adapter boundary → `gui/adobe-toolkit/macos/`, then `gui/adobe-toolkit/windows/`, and `ADR-002`.
+- Native GUI placement and adapter boundary → `gui/adobe-toolkit/macos/` and `ADR-002`; `gui/adobe-toolkit/windows/` remains deferred. Current delivery scope → `PROJECT_BRIEF.md`; execution order → `ROADMAP.md`.
 - macOS screen behavior and v1 delivery scope → `gui/adobe-toolkit/macos/INTERACTION_SPEC.md`.
 - macOS adapter operation/result schema → `shared/contracts/macos-gui-adapter-v1.md`.
 - `macos/AdobeBackuperGUI/` is an existing experimental implementation, retained as reference only; it is not the target location for the new desktop app.
