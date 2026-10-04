@@ -27,8 +27,8 @@ private actor RecordingBackend: BackendTransport {
     }
 
     func capabilities() async throws -> BackendReply { probes += 1; return capabilityReply }
-    func execute(_ operation: ToolkitOperation) async throws -> BackendReply {
-        requests.append(operation)
+    func execute(_ request: BackendRequest) async throws -> BackendReply {
+        requests.append(request.operation)
         if delay > 0 { try await Task.sleep(nanoseconds: delay) }
         return operationReply
     }
@@ -59,13 +59,13 @@ final class AdapterTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty)
     }
 
-    func testInputBearingOperationsRemainUnavailableEvenWhenAdvertised() async {
+    func testInputBearingOperationsRequireTypedInputsEvenWhenAdvertised() async {
         let backend = RecordingBackend(reply: BackendReply(stdout: Data(), exitCode: 0))
         let adapter = ToolkitAdapter(transport: backend)
         _ = await adapter.discover()
         for operation in [ToolkitOperation.backupCreate, .restoreValidate, .restoreApply] {
             let report = await adapter.run(operation)
-            XCTAssertEqual(report.status, .unavailable)
+            XCTAssertEqual(report.status, .invalid)
         }
         let requests = await backend.requests
         XCTAssertTrue(requests.isEmpty)

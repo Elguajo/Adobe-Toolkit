@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.macOS(.v12)],
     products: [.executable(name: "AdobeToolkit", targets: ["AdobeToolkit"])],
     targets: [
-        .target(name: "ToolkitCore", resources: [.copy("Resources/Fixtures")]),
+        .target(name: "ToolkitCore", resources: [.copy("Resources/Fixtures"), .copy("Resources/Backend")]),
         .executableTarget(name: "AdobeToolkit", dependencies: ["ToolkitCore"]),
         .testTarget(name: "ToolkitCoreTests", dependencies: ["ToolkitCore"]),
         .testTarget(name: "AdobeToolkitTests", dependencies: ["AdobeToolkit", "ToolkitCore"])

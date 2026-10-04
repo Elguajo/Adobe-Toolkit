@@ -9,10 +9,10 @@ struct FixtureBackend: BackendTransport {
         """.utf8), exitCode: 0)
     }
 
-    func execute(_ operation: ToolkitOperation) async throws -> BackendReply {
+    func execute(_ request: BackendRequest) async throws -> BackendReply {
         let name: String
         let exitCode: Int32
-        switch operation {
+        switch request.operation {
         case .backupScan: name = "backup-scan-cancelled"; exitCode = 2
         case .cleanupPreview: name = "cleanup-preview-success"; exitCode = 0
         case .diagnose: name = "diagnose-failed"; exitCode = 7

@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "macos": {
+    "kill_patterns": [
+      "CCXProcess",
+      "CoreSync",
+      "Creative Cloud",
+      "AdobeIPCBroker",
+      "Adobe Desktop Service",
+      "Acrobat",
+      "Adobe Premiere Pro",
+      "After Effects",
+      "Illustrator",
+      "Photoshop",
+      "AISniffer",
+      "aerender",
+      "AdobeCollabSync",
+      "CCLibrary",
+      "AdobeUpdateService",
+      "AdobeGCClient",
+      "AGSService",
+      "AGSUninstaller",
+      "AdobeGenuineValidator",
+      "AdobeCRDaemon",
+      "AdobeCrashReporter",
+      "Adobe Desktop"
+    ],
+    "paths_remove": [
+      "/Applications/Adobe*",
+      "/Applications/Utilities/Adobe*",
+      "/Applications/Utilities/Creative Cloud*",
+      "/Library/Application Support/Adobe",
+      "/Library/Application Support/AdobeGCClient",
+      "/Library/Preferences/com.adobe.*",
+      "/Library/PrivilegedHelperTools/com.adobe.*",
+      "/Library/Logs/Adobe*",
+      "/Library/Caches/com.adobe.*",
+      "/Library/LaunchAgents/com.adobe.*",
+      "/Library/LaunchDaemons/com.adobe.*",
+      "~/Library/Application Support/Adobe",
+      "~/Library/Preferences/com.adobe.*",
+      "~/Library/Preferences/com.Adobe.*",
+      "~/Library/Preferences/Adobe*",
+      "~/Library/Caches/Adobe*",
+      "~/Library/Caches/com.adobe.*",
+      "~/Library/Caches/com.Adobe.*",
+      "~/Library/Logs/Adobe*",
+      "~/Library/Saved Application State/com.adobe.*",
+      "~/Library/Saved Application State/com.Adobe.*",
+      "~/Library/Group Containers/Adobe*",
+      "~/Library/Group Containers/com.adobe.*",
+      "~/Library/Group Containers/com.Adobe.*",
+      "~/Library/LaunchAgents/com.adobe.*",
+      "~/Library/LaunchAgents/com.Adobe.*",
+      "/Users/Shared/Adobe*"
+    ]
+  },
+  "windows": {
+    "processes": [
+      "Adobe Premiere Pro",
+      "AfterFX",
+      "Illustrator",
+      "Photoshop",
+      "AISniffer",
+      "aerender",
+      "CCXProcess",
+      "Creative Cloud",
+      "Adobe Desktop Service",
+      "CoreSync",
+      "AdobeCollabSync",
+      "CCLibrary",
+      "AdobeUpdateService",
+      "AdobeGCClient",
+      "AGSService",
+      "AGSUninstaller",
+      "AdobeGenuineValidator"
+    ],
+    "services": [
+      "AGSService",
+      "AGMService",
+      "AdobeUpdateService"
+    ],
+    "paths_remove": [
+      "%ProgramFiles%\\Adobe",
+      "%ProgramFiles(x86)%\\Adobe",
+      "%ProgramData%\\Adobe",
+      "%LOCALAPPDATA%\\Adobe",
+      "%APPDATA%\\Adobe",
+      "%PUBLIC%\\Documents\\Adobe"
+    ]
+  }
+}

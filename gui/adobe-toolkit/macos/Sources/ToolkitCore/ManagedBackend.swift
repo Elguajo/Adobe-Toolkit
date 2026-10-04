@@ -3,6 +3,7 @@ import Darwin
 
 struct ManagedBackend: BackendTransport {
     let resourceRoot: URL?
+    static var bundled: ManagedBackend { ManagedBackend(resourceRoot: Bundle.module.resourceURL) }
 
     func executable() throws -> URL {
         guard let root = resourceRoot?.resolvingSymlinksInPath(), root.isFileURL else {
@@ -22,8 +23,8 @@ struct ManagedBackend: BackendTransport {
         try await invoke(arguments: ["--ui-json", "capabilities"])
     }
 
-    func execute(_ operation: ToolkitOperation) async throws -> BackendReply {
-        guard let arguments = operation.arguments else {
+    func execute(_ request: BackendRequest) async throws -> BackendReply {
+        guard let arguments = request.arguments else {
             throw ContractError.invalid("Operation is not connected in this shell.")
         }
         return try await invoke(arguments: arguments)
@@ -59,6 +60,12 @@ private final class ProcessJob: @unchecked Sendable {
         process.arguments = arguments
         process.currentDirectoryURL = executable.deletingLastPathComponent()
         process.standardInput = FileHandle.nullDevice
+        var environment = ProcessInfo.processInfo.environment
+        for key in ["BASH_ENV", "ENV", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP"] {
+            environment.removeValue(forKey: key)
+        }
+        environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        process.environment = environment
     }
 
     func cancel() {

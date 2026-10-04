@@ -3,7 +3,10 @@
   "default": {
     "required": [],
     "skills": [],
-    "notes": []
+    "notes": [
+      "Phase 02 macOS GUI delivery is complete; no execution phase is active. Read its compact Completion Record only when needed.",
+      "Windows remains planned/deferred outside current delivery. New work requires user-selected scope; preserve the pre-existing untracked GUI image and any later working-tree changes."
+    ]
   },
   "phases": {
     ".progressive/phases/00-native-macos-gui-specification.md": {
@@ -53,7 +56,7 @@
         "Current delivery is macOS only. Windows Phase 01 is deferred; do not begin Windows work.",
         "Phase 00 completed specification and fixtures, not the new app or --ui-json backend modes.",
         "The delivery location is gui/adobe-toolkit/macos/; macos/AdobeBackuperGUI/ is experimental reference only.",
-        "Task 1 delivered the SwiftUI shell and typed adapter with safe fixtures. The next unresolved task is non-interactive v1 backend modes and capability discovery; absent managed backend capability must remain unavailable.",
+        "Tasks 1\u20134 and applicable macOS GUI v1 acceptance gates are complete. Final evidence is in .progressive/completions/02-native-macos-gui-implementation.md. Native acceptance used temporary data/fake managed resources on macOS 15.8.1; Monterey execution remains unverified.",
         "Preserve CLI behavior. Do not implement privileged GUI operations or validate against real user Adobe data."
       ]
     }

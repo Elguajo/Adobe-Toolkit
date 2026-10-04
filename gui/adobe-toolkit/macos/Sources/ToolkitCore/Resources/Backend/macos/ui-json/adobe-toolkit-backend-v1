@@ -1,0 +1,20 @@
+#!/bin/bash
+# Fixed runtime and adjacent managed resources; no PATH/CWD/backend overrides.
+if [[ ! -x /usr/bin/python3 ]]; then
+    operation=unknown
+    mutates=false
+    case "${2:-}" in
+        capabilities) operation=capabilities ;;
+        backup-scan) operation=backup.scan ;;
+        backup-create) operation=backup.create; mutates=true ;;
+        restore-validate) operation=restore.validate ;;
+        restore-apply) operation=restore.apply; mutates=true ;;
+        cleanup-preview) operation=cleanup.preview ;;
+        diagnose) operation=diagnose.run ;;
+    esac
+    printf '{"schemaVersion":1,"operation":"%s","status":"unavailable","exitCode":4,"mutates":%s,"summary":{},"items":[],"warnings":[],"errors":["System Python 3 is unavailable."],"logPath":null}\n' "$operation" "$mutates"
+    exit 4
+fi
+unset PYTHONPATH PYTHONHOME PYTHONSTARTUP
+export PYTHONDONTWRITEBYTECODE=1
+exec /usr/bin/python3 "$(dirname "$0")/backend.py" "$@"

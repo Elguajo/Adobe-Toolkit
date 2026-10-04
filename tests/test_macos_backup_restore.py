@@ -27,9 +27,20 @@ def manifest(root: Path, row: str, metadata: str = "") -> None:
 
 
 class BackupRestoreTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Legacy enumeration must also stay off real installed Adobe data in this suite.
+        fixture = tempfile.TemporaryDirectory()
+        self.addCleanup(fixture.cleanup)
+        root = Path(fixture.name)
+        apps = root / "Applications"
+        apps.mkdir()
+        self.backupper = root / "AdobeBackuper.command"
+        self.backupper.write_text(BACKUPPER.read_text(encoding="utf-8").replace(
+            "find /Applications", f'find "{apps}"'), encoding="utf-8")
+
     def source_function(self, home: Path, command: str) -> subprocess.CompletedProcess[str]:
         return run(
-            ["bash", "-c", f'source "{BACKUPPER}"; {command}'],
+            ["bash", "-c", f'source "{self.backupper}"; {command}'],
             env={**os.environ, "HOME": str(home), "ADOBE_BACKUP_LIBRARY_ONLY": "true"},
         )
 
@@ -105,7 +116,7 @@ class BackupRestoreTests(unittest.TestCase):
             home = root / "home"
             home.mkdir()
             result = run(
-                ["bash", str(BACKUPPER), "--restore-headless", str(root / "missing")],
+                ["bash", str(self.backupper), "--restore-headless", str(root / "missing")],
                 env={**os.environ, "HOME": str(home)},
             )
             self.assertEqual(result.returncode, 3)
@@ -126,7 +137,7 @@ class BackupRestoreTests(unittest.TestCase):
             selection_file = root / "selection.txt"
             selection_file.write_text(str(source) + "\n", encoding="utf-8")
             result = run(
-                ["bash", str(BACKUPPER), "--backup-headless", str(selection_file)],
+                ["bash", str(self.backupper), "--backup-headless", str(selection_file)],
                 env={**os.environ, "HOME": str(home), "PATH": f"{fake_bin}:{os.environ['PATH']}"},
             )
             self.assertNotEqual(result.returncode, 0)
@@ -147,7 +158,7 @@ class BackupRestoreTests(unittest.TestCase):
             recovery.write_text("temporary", encoding="utf-8")
 
             result = run(
-                ["bash", str(BACKUPPER), "--backup-headless"],
+                ["bash", str(self.backupper), "--backup-headless"],
                 env={**os.environ, "HOME": str(home)},
             )
 
@@ -174,7 +185,7 @@ class BackupRestoreTests(unittest.TestCase):
             fake_rsync.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
             fake_rsync.chmod(0o755)
             result = run(
-                ["bash", str(BACKUPPER), "--restore-headless", str(backup)],
+                ["bash", str(self.backupper), "--restore-headless", str(backup)],
                 env={**os.environ, "HOME": str(home), "PATH": f"{fake_bin}:{os.environ['PATH']}"},
             )
             self.assertNotEqual(result.returncode, 0)
@@ -190,7 +201,7 @@ class BackupRestoreTests(unittest.TestCase):
             item.mkdir(parents=True)
             manifest(backup, "System_Apps_Data/Applications/Adobe Test.app\t/Applications\ttrue")
             result = run(
-                ["bash", str(BACKUPPER), "--restore-headless", str(backup)],
+                ["bash", str(self.backupper), "--restore-headless", str(backup)],
                 env={**os.environ, "HOME": str(home)},
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -221,7 +232,7 @@ class BackupRestoreTests(unittest.TestCase):
             fake_rsync.chmod(0o755)
 
             result = run(
-                ["bash", str(BACKUPPER), "--restore-headless", str(backup)],
+                ["bash", str(self.backupper), "--restore-headless", str(backup)],
                 env={
                     **os.environ,
                     "HOME": str(home),
@@ -246,7 +257,7 @@ class BackupRestoreTests(unittest.TestCase):
             (item / "plugin.txt").write_text("fixture", encoding="utf-8")
 
             result = run(
-                ["bash", str(BACKUPPER), "--restore-headless", str(backup)],
+                ["bash", str(self.backupper), "--restore-headless", str(backup)],
                 env={**os.environ, "HOME": str(home)},
             )
 
@@ -262,7 +273,7 @@ class BackupRestoreTests(unittest.TestCase):
             selection_file = root / "selection.txt"
             selection_file.write_text("/not/a/selected/source\n", encoding="utf-8")
             result = run(
-                ["bash", str(BACKUPPER), "--backup-headless", str(selection_file)],
+                ["bash", str(self.backupper), "--backup-headless", str(selection_file)],
                 env={**os.environ, "HOME": str(home)},
             )
             self.assertEqual(result.returncode, 0, result.stderr)

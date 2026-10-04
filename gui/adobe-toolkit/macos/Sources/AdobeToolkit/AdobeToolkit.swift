@@ -15,7 +15,14 @@ struct AdobeToolkit {
 @MainActor
 final class ToolkitDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
-    private let model = AppModel(fixtureMode: CommandLine.arguments.contains("--fixtures"))
+    private var closing = false
+    private var terminating = false
+    private let model: AppModel
+
+    init(model: AppModel) { self.model = model }
+    override convenience init() {
+        self.init(model: AppModel(fixtureMode: CommandLine.arguments.contains("--fixtures")))
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let menu = NSMenu()
@@ -49,7 +56,29 @@ final class ToolkitDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ notification: Notification) { model.cancel() }
-    func windowWillClose(_ notification: Notification) { model.cancel() }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard model.isBusy else { return true }
+        guard !closing else { return false }
+        closing = true
+        Task {
+            await model.prepareToClose()
+            closing = false
+            sender.performClose(nil)
+        }
+        return false
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard model.isBusy else { return .terminateNow }
+        if !terminating {
+            terminating = true
+            Task {
+                await model.prepareToClose()
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        return .terminateLater
+    }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         window?.makeKeyAndOrderFront(nil)

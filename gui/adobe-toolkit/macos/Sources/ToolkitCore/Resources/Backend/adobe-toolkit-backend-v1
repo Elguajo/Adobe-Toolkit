@@ -1,0 +1,3 @@
+#!/bin/bash
+# Fixed bundle-relative delegation, sharing the optional CLI runtime bootstrap.
+exec /bin/bash "$(dirname "$0")/macos/ui-json/adobe-toolkit-backend-v1" "$@"

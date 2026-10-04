@@ -15,19 +15,63 @@ public enum ToolkitOperation: String, CaseIterable, Codable, Sendable {
         [.cleanupApply, .repairPreview, .repairApply].contains(self)
     }
 
-    public var availableInShell: Bool {
-        [.backupScan, .cleanupPreview, .diagnose].contains(self)
-    }
+    public var availableInShell: Bool { !unsupported }
 
     public var mutates: Bool { [.backupCreate, .restoreApply].contains(self) }
 
-    // Input-bearing operations are connected in a later Phase 02 task.
     var arguments: [String]? {
         switch self {
         case .backupScan: return ["--ui-json", "backup-scan"]
         case .cleanupPreview: return ["--ui-json", "cleanup-preview"]
         case .diagnose: return ["--ui-json", "diagnose"]
         default: return nil
+        }
+    }
+}
+
+// UI callers supply data, never backend arguments or a selection-file path.
+public enum ToolkitRequest: Sendable {
+    case backupScan
+    case backupCreate(ids: [String])
+    case restoreValidate(source: URL)
+    case restoreApply(source: URL)
+    case cleanupPreview
+    case diagnose
+
+    public var operation: ToolkitOperation {
+        switch self {
+        case .backupScan: return .backupScan
+        case .backupCreate: return .backupCreate
+        case .restoreValidate: return .restoreValidate
+        case .restoreApply: return .restoreApply
+        case .cleanupPreview: return .cleanupPreview
+        case .diagnose: return .diagnose
+        }
+    }
+}
+
+// Constructed only after adapter validation. The transport has no public executor.
+enum BackendRequest: Sendable {
+    case observation(ToolkitOperation)
+    case backupCreate(selectionFile: URL)
+    case restoreValidate(source: URL)
+    case restoreApply(source: URL)
+
+    var operation: ToolkitOperation {
+        switch self {
+        case .observation(let operation): return operation
+        case .backupCreate: return .backupCreate
+        case .restoreValidate: return .restoreValidate
+        case .restoreApply: return .restoreApply
+        }
+    }
+
+    var arguments: [String]? {
+        switch self {
+        case .observation(let operation): return operation.arguments
+        case .backupCreate(let file): return ["--ui-json", "backup-create", "--selection-file", file.path]
+        case .restoreValidate(let source): return ["--ui-json", "restore-validate", "--source", source.path]
+        case .restoreApply(let source): return ["--ui-json", "restore-apply", "--source", source.path]
         }
     }
 }
